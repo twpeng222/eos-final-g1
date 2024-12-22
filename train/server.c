@@ -32,8 +32,8 @@ typedef struct {
 
 TrainServer *shared_data;
 const char line[5][20] = {"Taipei", "Taoyuan", "Taichung", "Tainan", "Kaohsiung"};
-struct sembuf p_op = {0, -1, SEM_UNDO}; // P 操作：減 1
-struct sembuf v_op = {0, 1, SEM_UNDO};  // V 操作：加 1
+struct sembuf p_op = {0, -1, SEM_UNDO}; 
+struct sembuf v_op = {0, 1, SEM_UNDO};  
 
 
 
@@ -61,7 +61,7 @@ int isEarlier(TrainTime *t1, TrainTime *t2) {
     return t1->minute < t2->minute;
 }
 
-// 初始化火車資料
+
 void initialize_train_data() {
     for (int i = 0; i < TRAIN_AMOUNT; i++) {
         int direction = (i < TRAIN_AMOUNT / 2) ? 1 : -1; // 順向為 1，逆向為 -1
@@ -78,7 +78,7 @@ void initialize_train_data() {
             shared_data->schedule[i][point].hour = start_hour + j;
             shared_data->schedule[i][point].minute = 0;
             if (j < POINT_AMOUNT - 1) {
-                shared_data->seats[i][j] = 100; // 初始座位數為 100
+                shared_data->seats[i][j] = 100; // 初始座位數
             }
         }
     }
@@ -86,7 +86,7 @@ void initialize_train_data() {
 
 // // 計算跨點剩餘座位數的最小值
 // int calculate_remaining_seats(int train_index, int start, int dest) {
-//     int min_seats = 100; // 假設最大座位數為 100
+//     int min_seats = 100;
 //     if (start < dest) {
 //         for (int i = start; i < dest; i++) {
 //             if (shared_data->seats[train_index][i] < min_seats) {
@@ -119,7 +119,7 @@ void search_train(int train_list[TRAIN_AMOUNT], int start, int dest, TrainTime *
     }
 }
 
-// 搜尋轉車方案
+
 void search_transfer(int start, int dest, TrainTime *time, char *response) {
     for (int mid = 0; mid < POINT_AMOUNT; mid++) {
         if (mid == start || mid == dest) continue;
@@ -127,7 +127,6 @@ void search_transfer(int start, int dest, TrainTime *time, char *response) {
         int first_train[TRAIN_AMOUNT] = {0};
         int second_train[TRAIN_AMOUNT] = {0};
 
-        // 查找第一段車次
         search_train(first_train, start, mid, time);
 
         for (int i = 0; i < TRAIN_AMOUNT; i++) {
@@ -150,7 +149,7 @@ void search_transfer(int start, int dest, TrainTime *time, char *response) {
     }
 }
 int calculate_remaining_seats(int train_index, int start, int dest) {
-    int min_seats = 100; // 假設最大座位數為 100
+    int min_seats = 100; 
     if (start < dest) {
         for (int i = start; i < dest; i++) {
             if (shared_data->seats[train_index][i] < min_seats) {
@@ -169,13 +168,13 @@ int calculate_remaining_seats(int train_index, int start, int dest) {
 
 
 int update_seats(int train_index, int start, int dest, int tickets) {
-    semop(sem_id, &p_op, 1); // 訊號量 P 操作
+    semop(sem_id, &p_op, 1);
 
     if (start < dest) {
         for (int i = start; i < dest; i++) {
             if (shared_data->seats[train_index][i] < tickets) {
-                semop(sem_id, &v_op, 1); // 訊號量 V 操作
-                return -1; // 座位不足
+                semop(sem_id, &v_op, 1);
+                return -1;
             }
         }
         for (int i = start; i < dest; i++) {
@@ -184,8 +183,8 @@ int update_seats(int train_index, int start, int dest, int tickets) {
     } else {
         for (int i = start - 1; i >= dest; i--) {
             if (shared_data->seats[train_index][i] < tickets) {
-                semop(sem_id, &v_op, 1); // 訊號量 V 操作
-                return -1; // 座位不足
+                semop(sem_id, &v_op, 1); 
+                return -1;
             }
         }
         for (int i = start - 1; i >= dest; i--) {
@@ -193,13 +192,12 @@ int update_seats(int train_index, int start, int dest, int tickets) {
         }
     }
 
-    semop(sem_id, &v_op, 1); // 訊號量 V 操作
-    return 0; // 成功
+    semop(sem_id, &v_op, 1);
+    return 0; 
 }
 
 
 
-// 處理客戶端請求
 void handle_client(int client_sock) {
     char buffer[BUFFER_SIZE];
     int bytes_read;
@@ -239,7 +237,6 @@ void handle_client(int client_sock) {
                     }
                 }
 
-                // 搜尋轉車方案
                 strcat(response, "\nTransfer options:\n");
                 search_transfer(start_index, dest_index, &start_time, response);
 
@@ -292,7 +289,7 @@ int main(int argc, char *argv[]) {
     }
 
     sem_id = semget(sem_key, 1, IPC_CREAT | 0666);
-    semctl(sem_id, 0, SETVAL, 1); // 初始化訊號量值為 1
+    semctl(sem_id, 0, SETVAL, 1); 
 
     shared_data = (TrainServer *)shmat(shm_id, NULL, 0);
     if (shared_data == (void *)-1) {
