@@ -10,7 +10,7 @@
 #include <sys/time.h>
 
 #define BUFFER_SIZE 512
-#define TRAIN_AMOUNT 10 // 10 台火車
+#define TRAIN_AMOUNT 10 
 #define POINT_AMOUNT 5
 
 int shm_id;
@@ -37,7 +37,7 @@ struct sembuf v_op = {0, 1, SEM_UNDO};
 
 
 
-// 解析站點名稱
+// 解碼站點名稱
 int handle_point(char *point) {
     for (int i = 0; i < POINT_AMOUNT; i++) {
         if (strncmp(point, line[i], strlen(line[i])) == 0) {
@@ -52,7 +52,7 @@ void decode_time(TrainTime *time, char *a) {
     sscanf(a, "%d/%d/%d/%d:%d", &time->year, &time->month, &time->day, &time->hour, &time->minute);
 }
 
-// 比較時間
+
 int isEarlier(TrainTime *t1, TrainTime *t2) {
     if (t1->year != t2->year) return t1->year < t2->year;
     if (t1->month != t2->month) return t1->month < t2->month;
@@ -84,7 +84,7 @@ void initialize_train_data() {
     }
 }
 
-// // 計算跨點剩餘座位數的最小值
+// 
 // int calculate_remaining_seats(int train_index, int start, int dest) {
 //     int min_seats = 100;
 //     if (start < dest) {
@@ -103,7 +103,7 @@ void initialize_train_data() {
 //     return min_seats;
 // }
 
-// 搜尋符合條件的列車
+
 void search_train(int train_list[TRAIN_AMOUNT], int start, int dest, TrainTime *time) {
     for (int i = 0; i < TRAIN_AMOUNT; i++) {
         int direction = shared_data->direction[i];
