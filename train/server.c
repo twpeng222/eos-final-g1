@@ -271,7 +271,7 @@ void handle_client(int client_sock) {
     }
 }
 
-// 主程式
+
 int main(int argc, char *argv[]) {
     if (argc != 2) {
         fprintf(stderr, "Usage: %s <port>\n", argv[0]);
