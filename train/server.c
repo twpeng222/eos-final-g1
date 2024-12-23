@@ -10,8 +10,9 @@
 #include <sys/time.h>
 
 #define BUFFER_SIZE 512
-#define TRAIN_AMOUNT 10 
+#define TRAIN_AMOUNT 10 // 10 台火車
 #define POINT_AMOUNT 5
+#define SEAT_AMOUNT 10
 
 int shm_id;
 int sem_id;
@@ -25,19 +26,19 @@ typedef struct {
 } TrainTime;
 
 typedef struct {
-    int seats[TRAIN_AMOUNT][POINT_AMOUNT - 1]; // 每段座位數
+    int seats[TRAIN_AMOUNT][POINT_AMOUNT - 1];
     TrainTime schedule[TRAIN_AMOUNT][POINT_AMOUNT];
-    int direction[TRAIN_AMOUNT]; // 火車方向：1 = 順向, -1 = 逆向
+    int direction[TRAIN_AMOUNT];
 } TrainServer;
 
 TrainServer *shared_data;
 const char line[5][20] = {"Taipei", "Taoyuan", "Taichung", "Tainan", "Kaohsiung"};
 struct sembuf p_op = {0, -1, SEM_UNDO}; 
-struct sembuf v_op = {0, 1, SEM_UNDO};  
+struct sembuf v_op = {0, 1, SEM_UNDO}; 
 
 
 
-// 解碼站點名稱
+
 int handle_point(char *point) {
     for (int i = 0; i < POINT_AMOUNT; i++) {
         if (strncmp(point, line[i], strlen(line[i])) == 0) {
@@ -47,7 +48,7 @@ int handle_point(char *point) {
     return -1;
 }
 
-// 解碼時間
+
 void decode_time(TrainTime *time, char *a) {
     sscanf(a, "%d/%d/%d/%d:%d", &time->year, &time->month, &time->day, &time->hour, &time->minute);
 }
@@ -64,10 +65,10 @@ int isEarlier(TrainTime *t1, TrainTime *t2) {
 
 void initialize_train_data() {
     for (int i = 0; i < TRAIN_AMOUNT; i++) {
-        int direction = (i < TRAIN_AMOUNT / 2) ? 1 : -1; // 順向為 1，逆向為 -1
+        int direction = (i < TRAIN_AMOUNT / 2) ? 1 : -1;
         shared_data->direction[i] = direction;
 
-        int start_hour = (i % (TRAIN_AMOUNT / 2)) + 6; // 每台火車從不同時間起點開始
+        int start_hour = (i % (TRAIN_AMOUNT / 2)) + 6; 
 
         for (int j = 0; j < POINT_AMOUNT; j++) {
             int point = (direction == 1) ? j : POINT_AMOUNT - j - 1;
@@ -75,18 +76,18 @@ void initialize_train_data() {
             shared_data->schedule[i][point].year = 2024;
             shared_data->schedule[i][point].month = 12;
             shared_data->schedule[i][point].day = 21;
-            shared_data->schedule[i][point].hour = start_hour + j;
+            shared_data->schedule[i][point].hour = start_hour + j*3;
             shared_data->schedule[i][point].minute = 0;
-            if (j < POINT_AMOUNT - 1) {
-                shared_data->seats[i][j] = 100; // 初始座位數
-            }
+
+            shared_data->seats[i][j] = SEAT_AMOUNT; 
+            printf("Train%d %s %d\n", i, line[point], shared_data->schedule[i][point].hour);
         }
     }
 }
 
-// 
+
 // int calculate_remaining_seats(int train_index, int start, int dest) {
-//     int min_seats = 100;
+//     int min_seats = 100; // 假設最大座位數為 100
 //     if (start < dest) {
 //         for (int i = start; i < dest; i++) {
 //             if (shared_data->seats[train_index][i] < min_seats) {
@@ -127,6 +128,7 @@ void search_transfer(int start, int dest, TrainTime *time, char *response) {
         int first_train[TRAIN_AMOUNT] = {0};
         int second_train[TRAIN_AMOUNT] = {0};
 
+
         search_train(first_train, start, mid, time);
 
         for (int i = 0; i < TRAIN_AMOUNT; i++) {
@@ -149,7 +151,7 @@ void search_transfer(int start, int dest, TrainTime *time, char *response) {
     }
 }
 int calculate_remaining_seats(int train_index, int start, int dest) {
-    int min_seats = 100; 
+    int min_seats = SEAT_AMOUNT; 
     if (start < dest) {
         for (int i = start; i < dest; i++) {
             if (shared_data->seats[train_index][i] < min_seats) {
@@ -173,9 +175,8 @@ int update_seats(int train_index, int start, int dest, int tickets) {
     if (start < dest) {
         for (int i = start; i < dest; i++) {
             if (shared_data->seats[train_index][i] < tickets) {
-                semop(sem_id, &v_op, 1);
-                return -1;
-            }
+                semop(sem_id, &v_op, 1); 
+                return -1; }
         }
         for (int i = start; i < dest; i++) {
             shared_data->seats[train_index][i] -= tickets;
@@ -192,12 +193,13 @@ int update_seats(int train_index, int start, int dest, int tickets) {
         }
     }
 
-    semop(sem_id, &v_op, 1);
+    semop(sem_id, &v_op, 1); 
     return 0; 
 }
 
 
 
+// 處理客戶端請求
 void handle_client(int client_sock) {
     char buffer[BUFFER_SIZE];
     int bytes_read;
