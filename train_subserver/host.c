@@ -7,7 +7,7 @@
 #include <sys/shm.h>
 #include <sys/sem.h>
 #include <signal.h>
-#include <sys/time.h>
+#include <sys/wait.h>
 
 #define BUFFER_SIZE 512
 #define TRAIN_AMOUNT 10
@@ -20,10 +20,20 @@ typedef struct {
     int destination[TRAIN_AMOUNT]; 
     int seats[TRAIN_AMOUNT];          
 } TrainInfo;
-// TrainInfo train_data; 
-TrainInfo* train; 
+
+TrainInfo* train;
 int shm_id;
-int sem_id;
+char input_buffer[BUFFER_SIZE];
+int pipefd1[2], pipefd2[2]; // 管道用於父子進程通信
+char buffer[BUFFER_SIZE];
+
+
+void handle_signal(int sig) {
+    // 子進程接收到信號後從管道讀取輸入並處理
+    read((sig == SIGUSR1) ? pipefd1[0] : pipefd2[0], buffer, BUFFER_SIZE);
+    // printf("Child %d received: %s\n", getpid(), buffer);
+}
+
 
 int handle_point(char *point) {
     for (int i = 0; i < POINT_AMOUNT; i++) {
@@ -56,8 +66,9 @@ void parse_train_info(char server_data[BUFFER_SIZE], TrainInfo* train) {
     }
 }
 
-void connect_to_server(const char *server_ip, int server_port){
 
+
+void connect_to_server(const char *server_ip, int server_port, int pipefd_read) {
     int sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd < 0) {
         perror("Socket creation failed");
@@ -81,52 +92,47 @@ void connect_to_server(const char *server_ip, int server_port){
         exit(EXIT_FAILURE);
     }
 
-    printf("Connected to server %s:%d\n", server_ip, server_port);
+    printf("Child process connected to server %s:%d\n", server_ip, server_port);
 
-    char buffer[BUFFER_SIZE];
+    // 註冊信號處理函數
+    signal((pipefd_read == pipefd1[0]) ? SIGUSR1 : SIGUSR2, handle_signal);
+
     while (1) {
-        printf("Enter your command (type 'exit' to quit): ");
-        memset(buffer, 0, BUFFER_SIZE);
-        fgets(buffer, BUFFER_SIZE, stdin);
+        // 等待信號喚醒
+        pause();
 
-        buffer[strcspn(buffer, "\n")] = '\0';
-
-        if (strcmp(buffer, "exit") == 0) {
-            printf("Closing connection...\n");
-            break;
-        }
-
+        // 從管道讀取父進程傳遞的資料
+        
+        // read(pipefd_read, buffer, BUFFER_SIZE);
+        // printf("%s\n", buffer);
+        // 傳送資料到伺服器
         if (send(sockfd, buffer, strlen(buffer), 0) < 0) {
             perror("Send failed");
             break;
         }
 
+        // 接收伺服器回應
         memset(buffer, 0, BUFFER_SIZE);
-
         int bytes_received = recv(sockfd, buffer, BUFFER_SIZE - 1, 0);
-        if (bytes_received < 0) {
+        if (bytes_received > 0) {
+            printf("\nResponse from server on port %d: %s\n", server_port, buffer);
+            fflush(stdout);
+        } else if (bytes_received == 0) {
+            printf("\nServer on port %d closed the connection.\n", server_port);
+            break;
+        } else {
             perror("Receive failed");
             break;
-        } else if (bytes_received == 0) {
-            printf("Server disconnected.\n");
-            break;
         }
-        
-
-        // printf("Server response: %s\n", buffer);
-
-        parse_train_info(buffer, train);
-
     }
+
     close(sockfd);
-    printf("Client terminated.\n");
+    exit(EXIT_SUCCESS);
 }
-
-
 
 int main(int argc, char *argv[]) {
     if (argc != 4) {
-        fprintf(stderr, "Usage: %s <ip> <port> <port>\n", argv[0]);
+        fprintf(stderr, "Usage: %s <ip> <port1> <port2>\n", argv[0]);
         exit(EXIT_FAILURE);
     }
 
@@ -134,78 +140,59 @@ int main(int argc, char *argv[]) {
     int server_port1 = atoi(argv[2]);
     int server_port2 = atoi(argv[3]);
 
-    key_t key = ftok("server.c", 1);
-    shm_id = shmget(key, sizeof(TrainInfo), IPC_CREAT | 0666);
-    if (shm_id == -1) {
-        perror("shmget failed");
+    // 創建管道
+    if (pipe(pipefd1) == -1 || pipe(pipefd2) == -1) {
+        perror("Pipe creation failed");
         exit(EXIT_FAILURE);
     }
-    train = (TrainInfo *)shmat(shm_id, NULL, 0);
-    for (int i = 0; i < 2;i++) {
-        pid_t pid = fork();
-        if (pid > 0) {
-            connect_to_server(server_ip, atoi(argv[i+2]));
-        }
+
+    pid_t pid1 = fork();
+    if (pid1 == 0) {
+        // 子進程 1：連接到第一個伺服器端口
+        close(pipefd1[1]); // 關閉寫端
+        connect_to_server(server_ip, server_port1, pipefd1[0]);
     }
-    // int sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    // if (sockfd < 0) {
-    //     perror("Socket creation failed");
-    //     exit(EXIT_FAILURE);
-    // }
 
-    // struct sockaddr_in server_addr;
-    // memset(&server_addr, 0, sizeof(server_addr));
-    // server_addr.sin_family = AF_INET;
-    // server_addr.sin_port = htons(server_port);
+    pid_t pid2 = fork();
+    if (pid2 == 0) {
+        // 子進程 2：連接到第二個伺服器端口
+        close(pipefd2[1]); // 關閉寫端
+        connect_to_server(server_ip, server_port2, pipefd2[0]);
+    }
 
-    // if (inet_pton(AF_INET, server_ip, &server_addr.sin_addr) <= 0) {
-    //     perror("Invalid IP address");
-    //     close(sockfd);
-    //     exit(EXIT_FAILURE);
-    // }
+    // 父進程
+    close(pipefd1[0]); // 關閉讀端
+    close(pipefd2[0]); // 關閉讀端
 
-    // if (connect(sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
-    //     perror("Connection to server failed");
-    //     close(sockfd);
-    //     exit(EXIT_FAILURE);
-    // }
+    while (1) {
+        // 從終端讀取輸入
+        printf("Enter your command (type 'exit' to quit): ");
+        fgets(input_buffer, BUFFER_SIZE, stdin);
 
-    // printf("Connected to server %s:%d\n", server_ip, server_port);
+        input_buffer[strcspn(input_buffer, "\n")] = '\0'; // 移除換行符
 
-    // char buffer[BUFFER_SIZE];
-    // while (1) {
-    //     printf("Enter your command (type 'exit' to quit): ");
-    //     memset(buffer, 0, BUFFER_SIZE);
-    //     fgets(buffer, BUFFER_SIZE, stdin);
+        if (strcmp(input_buffer, "exit") == 0) {
+            printf("Exiting...\n");
+            kill(pid1, SIGKILL); // 終止子進程
+            kill(pid2, SIGKILL);
+            break;
+        }
 
-    //     buffer[strcspn(buffer, "\n")] = '\0';
+        // 將輸入寫入管道
+        write(pipefd1[1], input_buffer, strlen(input_buffer) + 1);
+        write(pipefd2[1], input_buffer, strlen(input_buffer) + 1);
 
-    //     if (strcmp(buffer, "exit") == 0) {
-    //         printf("Closing connection...\n");
-    //         break;
-    //     }
+        // 發送信號喚醒子進程
+        kill(pid1, SIGUSR1);
+        kill(pid2, SIGUSR2);
+    }
 
-    //     if (send(sockfd, buffer, strlen(buffer), 0) < 0) {
-    //         perror("Send failed");
-    //         break;
-    //     }
+    close(pipefd1[1]);
+    close(pipefd2[1]);
 
-    //     memset(buffer, 0, BUFFER_SIZE);
+    wait(NULL); // 等待子進程結束
+    wait(NULL);
 
-    //     int bytes_received = recv(sockfd, buffer, BUFFER_SIZE - 1, 0);
-    //     if (bytes_received < 0) {
-    //         perror("Receive failed");
-    //         break;
-    //     } else if (bytes_received == 0) {
-    //         printf("Server disconnected.\n");
-    //         break;
-    //     }
-    //     // printf("Server response: %s\n", buffer);
-
-    //     parse_train_info(buffer, train);
-
-    // }
-    // close(sockfd);
-    // printf("Client terminated.\n");
+    printf("Parent process terminated.\n");
     return 0;
 }
