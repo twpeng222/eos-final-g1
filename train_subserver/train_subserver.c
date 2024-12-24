@@ -14,6 +14,7 @@
 #define POINT_AMOUNT 5
 #define SEAT_AMOUNT 10
 
+
 int shm_id;
 int sem_id;
 
@@ -53,13 +54,19 @@ void decode_time(TrainTime *time, char *a) {
     sscanf(a, "%d/%d/%d/%d:%d", &time->year, &time->month, &time->day, &time->hour, &time->minute);
 }
 
+void encode_time(TrainTime *time, char *a) {
+    sprintf(a, "%04d/%02d/%02d/%02d:%02d", time->year, time->month, time->day, time->hour, time->minute);
+
+}
+
+
 
 int isEarlier(TrainTime *t1, TrainTime *t2) {
-    if (t1->year != t2->year) return t1->year < t2->year;
-    if (t1->month != t2->month) return t1->month < t2->month;
-    if (t1->day != t2->day) return t1->day < t2->day;
+    if (t1->year != t2->year) return 0;
+    if (t1->month != t2->month) return 0;
+    if (t1->day != t2->day) return 0;
     if (t1->hour != t2->hour) return t1->hour < t2->hour;
-    return t1->minute < t2->minute;
+    return t1->minute <= t2->minute;
 }
 
 
@@ -104,26 +111,41 @@ int calculate_remaining_seats(int train_index, int start, int dest) {
     return min_seats;
 }
 
-int calculate_farest_dest(int train_index, int start, int dest){
+int calculate_farest_dest(int train_index, int start, int dest,int amount){
     int direction = shared_data->direction[train_index];
     int remaining_seats = 0;
     while (remaining_seats == 0){
         remaining_seats = calculate_remaining_seats(train_index, start, dest);
-        if (direction == 1 && remaining_seats==0) {
+        if (direction == 1 && remaining_seats < amount) {
             dest--;
-        } else if (direction == -1 && remaining_seats==0){
+        } else if (direction == -1 && remaining_seats < amount){
             dest++;
         }
     }
     return dest;
 }
 
+int calculate_inverse_farest_dest(int train_index, int start, int dest){
+    int direction = shared_data->direction[train_index];
+    int remaining_seats = 0;
+    while (remaining_seats == 0){
+        remaining_seats = calculate_remaining_seats(train_index, start, dest);
+        if (direction == 1 && remaining_seats==0) {
+            start++;
+        } else if (direction == -1 && remaining_seats==0){
+            start++;
+        }
+    }
+    return start;
+}
+
+
 
 void search_train(int train_list[TRAIN_AMOUNT], int start, int dest, TrainTime *time) {
     for (int i = 0; i < TRAIN_AMOUNT; i++) {
         int direction = shared_data->direction[i];
         if ((direction == 1 && start < dest) || (direction == -1 && start > dest)) {
-            if (isEarlier(time, &shared_data->schedule[i][start])) {
+            if (isEarlier( time, &shared_data->schedule[i][start])) {
                 train_list[i] = 1;
             } else {
                 train_list[i] = 0;
@@ -132,6 +154,24 @@ void search_train(int train_list[TRAIN_AMOUNT], int start, int dest, TrainTime *
             train_list[i] = 0;
         }
     }
+    // TrainTime* temp;
+    // int flag = 0;
+    // for (int i = 0; i < TRAIN_AMOUNT; i++){
+    //     // if (i == 0){
+    //     //     temp = &shared_data->schedule[i][start];
+    //     // }
+    //     if (train_list[i]){
+    //         if (flag == 0){
+    //             flag = 1;
+    //             temp = &shared_data->schedule[i][start];
+    //         }
+    //         if (isEarlier(&shared_data->schedule[i][start],temp)){
+    //             train_list[i] = 0;
+    //         } else{
+    //             temp = &shared_data->schedule[i][start];
+    //         }
+    //     }
+    // }
 }
 
 
@@ -205,14 +245,17 @@ void handle_client(int client_sock) {
     if (pid>0) {
         while ((bytes_read = recv(client_sock, buffer, BUFFER_SIZE, 0)) > 0) {
             buffer[bytes_read] = '\0';
-
+            printf("check_schedule");
+            fflush(stdout);
             if (strncmp(buffer, "check_schedule", 14) == 0) {
+                
+                
                 char start[20], dest[20], time_str[20];
                 TrainTime start_time;
-                int start_index, dest_index;
+                int start_index, dest_index, amount;
                 int train_list[TRAIN_AMOUNT] = {0};
 
-                sscanf(buffer + 15, "%s %s %s", start, dest, time_str);
+                sscanf(buffer + 15, "%s %s %s %d", start, dest, time_str, &amount);
                 decode_time(&start_time, time_str);
 
                 start_index = handle_point(start);
@@ -230,12 +273,14 @@ void handle_client(int client_sock) {
                 char response[BUFFER_SIZE] = "";
                 for (int i = 0; i < TRAIN_AMOUNT; i++) {
                     if (train_list[i]) {
-                        int farest_index = calculate_farest_dest(i, start_index, dest_index);
+                        int farest_index = calculate_farest_dest(i, start_index, dest_index,amount);
                         int remaining_seats = calculate_remaining_seats(i, start_index, farest_index);
-                        char temp[100];
-                        sprintf(temp, "Direct Train %d from %s to %s (Seats: %d)\n",
-                                i, line[start_index],line[farest_index], remaining_seats);
+                        char temp[512],time[20];
+                        encode_time(shared_data->schedule[i],time);
+                        sprintf(temp, "Farest Train %d from %s to %s (Seats: %d) at %s\n",
+                                i, line[start_index],line[farest_index], remaining_seats, time);
                         strcat(response, temp);
+                        break;
                     }
                 }
 
