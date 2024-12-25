@@ -20,15 +20,6 @@
 int shm_id;
 int sem_id;
 
-typedef struct {
-    int used;                 // 0: 未使用, 1: 已使用
-    int train_index;
-    int start_index;
-    int dest_index;
-    int total_tickets;
-    int seat_numbers[100];    // 假設最多合併 100 張
-    int seat_count;
-} MergedBooking;
 
 typedef struct {
     int year;
@@ -420,133 +411,6 @@ int update_seats(int train_index, int start, int dest, int tickets, const char *
     return 0;
 }
 
-void free_seats_for_record(BookingRecord *record) {
-    int train_idx = record->train_index;
-    int start_seg = record->start_index;
-    int dest_seg  = record->dest_index;
-
-    for (int s = 0; s < record->tickets; s++) {
-        int seat_id = record->seat_numbers[s];
-
-        if (start_seg < dest_seg) {
-            // 順向
-            for (int seg = start_seg; seg < dest_seg; seg++) {
-                shared_data->seat_allocation[train_idx][seat_id][seg] = 0;
-                shared_data->seats[train_idx][seg] += 1;
-            }
-        } else {
-            // 逆向
-            for (int seg = start_seg - 1; seg >= dest_seg; seg--) {
-                shared_data->seat_allocation[train_idx][seat_id][seg] = 0;
-                shared_data->seats[train_idx][seg] += 1;
-            }
-        }
-    }
-}
-
-void partial_cancel(BookingRecord *record, int num_to_cancel) {
-    // 理論上呼叫前就確定 num_to_cancel <= record->tickets
-    if (num_to_cancel <= 0 || num_to_cancel > record->tickets) {
-        return;
-    }
-
-    int train_idx = record->train_index;
-    int start_seg = record->start_index;
-    int dest_seg  = record->dest_index;
-
-    // 例如從後面開始釋放
-    int start_idx = record->tickets - num_to_cancel;
-    for (int i = start_idx; i < record->tickets; i++) {
-        int seat_id = record->seat_numbers[i];
-
-        if (start_seg < dest_seg) {
-            for (int seg = start_seg; seg < dest_seg; seg++) {
-                shared_data->seat_allocation[train_idx][seat_id][seg] = 0;
-                shared_data->seats[train_idx][seg] += 1;
-            }
-        } else {
-            for (int seg = start_seg - 1; seg >= dest_seg; seg--) {
-                shared_data->seat_allocation[train_idx][seat_id][seg] = 0;
-                shared_data->seats[train_idx][seg] += 1;
-            }
-        }
-    }
-
-    // 更新 tickets (扣除部分)
-    record->tickets -= num_to_cancel;
-
-    // 也把後面退掉的那幾個 seat_numbers 設為 -1 或 0 表示無效
-    for (int i = 0; i < num_to_cancel; i++) {
-        record->seat_numbers[record->tickets + i] = -1;
-    }
-}
-
-int cancel_order(const char *id, 
-                 int train_index, 
-                 int start_index, 
-                 int dest_index, 
-                 int cancel_num) 
-{
-    semop(sem_id, &p_op, 1); // 取得鎖
-
-    // (A) 統計同一 (id, train_index, start_index, dest_index) 總共可退的票數
-    int total_tickets_can_cancel = 0;
-    for (int i = 0; i < shared_data->booking_count; i++) {
-        BookingRecord *rec = &shared_data->bookings[i];
-        if ((strcmp(rec->id, id) == 0) &&
-            rec->train_index == train_index &&
-            rec->start_index == start_index &&
-            rec->dest_index == dest_index)
-        {
-            total_tickets_can_cancel += rec->tickets;
-        }
-    }
-
-    // (B) 若總可退數 < cancel_num => 直接失敗
-    if (total_tickets_can_cancel < cancel_num) {
-        semop(sem_id, &v_op, 1);
-        return -1;
-    }
-
-    // (C) 逐筆退，直到把 cancel_num 退完
-    int remain_to_cancel = cancel_num;
-    int i = 0;
-    while (i < shared_data->booking_count && remain_to_cancel > 0) {
-        BookingRecord *rec = &shared_data->bookings[i];
-
-        // 只針對同一 (id, train_index, start_index, dest_index)
-        if ((strcmp(rec->id, id) == 0) &&
-            rec->train_index == train_index &&
-            rec->start_index == start_index &&
-            rec->dest_index == dest_index)
-        {
-            // 若這筆訂單的票數 <= 要退的 => 全退
-            if (rec->tickets <= remain_to_cancel) {
-                free_seats_for_record(rec);  // 釋放這筆的所有座位
-                remain_to_cancel -= rec->tickets;
-
-                // 從 booking[] 移除 (最後一筆覆蓋)
-                shared_data->booking_count--;
-                if (i != shared_data->booking_count) {
-                    shared_data->bookings[i] = shared_data->bookings[shared_data->booking_count];
-                }
-                // 不 i++，因為 i 位置現在是新的訂單
-            } else {
-                // 只退部分
-                partial_cancel(rec, remain_to_cancel);
-                remain_to_cancel = 0; // 退完
-                i++;
-            }
-        } else {
-            i++;
-        }
-    }
-
-    semop(sem_id, &v_op, 1); // 釋放鎖
-    return 0; // 成功
-}
-
-
 
 // 處理客戶端請求
 void handle_client(int client_sock) {
@@ -586,7 +450,7 @@ void handle_client(int client_sock) {
                         int farest_index = calculate_farest_dest(i, start_index, dest_index, amount);
                         int remaining_seats = calculate_remaining_seats(i, start_index, farest_index);
                         char temp[512], time[20];
-                        encode_time(shared_data->schedule[i], time);
+                        encode_time(&shared_data->schedule[i][farest_index], time);
                         sprintf(temp, "Farest Train %d from %s to %s (Seats: %d) at %s\n",
                                 i, line[start_index], line[farest_index], remaining_seats, time);
                         strcat(response, temp);
@@ -595,102 +459,52 @@ void handle_client(int client_sock) {
                 }
                 send(client_sock, response, strlen(response), 0);
             } else if (strncmp(buffer, "check_order", 11) == 0) {
+                // 提取用戶輸入的 ID
                 char id[20];
                 sscanf(buffer + 12, "%s", id);
                 printf("Querying bookings for ID: %s\n", id);
                 fflush(stdout);
 
-                semop(sem_id, &p_op, 1);
+                semop(sem_id, &p_op, 1); // 獲取資源鎖
 
                 char response[BUFFER_SIZE] = "";
                 int found = 0;
 
-                // 暫存合併後的結果 (假設上限 50 組)
-                MergedBooking merged[50];
-                memset(merged, 0, sizeof(merged));  // 全部清為 0
-
-                // 遍歷所有訂單
+                // 遍歷所有訂單，按起點、終點和列車班次進行分組
                 for (int i = 0; i < shared_data->booking_count; i++) {
                     BookingRecord *record = &shared_data->bookings[i];
                     if (strcmp(record->id, id) == 0) {
                         found = 1;
 
-                        // 嘗試找到相同 (train_index, start_index, dest_index) 的項目
-                        int merged_index = -1;
-                        for (int m = 0; m < 50; m++) {
-                            if (merged[m].used == 1 &&
-                                merged[m].train_index == record->train_index &&
-                                merged[m].start_index == record->start_index &&
-                                merged[m].dest_index == record->dest_index) {
-                                // 找到了
-                                merged_index = m;
-                                break;
-                            }
-                        }
-
-                        // 如果沒找到 => 開一筆新的
-                        if (merged_index == -1) {
-                            for (int m = 0; m < 50; m++) {
-                                if (merged[m].used == 0) {
-                                    merged[m].used = 1;
-                                    merged[m].train_index = record->train_index;
-                                    merged[m].start_index = record->start_index;
-                                    merged[m].dest_index = record->dest_index;
-                                    merged[m].total_tickets = 0;
-                                    merged[m].seat_count = 0;
-                                    merged_index = m;
-                                    break;
-                                }
-                            }
-                        }
-
-                        // 開始合併 
-                        // (假設 merged_index 一定找到)
-                        merged[merged_index].total_tickets += record->tickets;
-                        // 把 record->seat_numbers[] append 到 merged[].seat_numbers 裡
+                        // 格式化每筆訂單
+                        char booking_info[1000];
+                        char seat_list[BUFFER_SIZE] = "";
                         for (int j = 0; j < record->tickets; j++) {
-                            merged[merged_index].seat_numbers[ merged[merged_index].seat_count ] 
-                                = record->seat_numbers[j];
-                            merged[merged_index].seat_count++;
+                            char seat_info[10];
+                            sprintf(seat_info, "%d", record->seat_numbers[j]);
+                            if (j > 0) strcat(seat_list, ", "); // 添加逗號分隔座位號
+                            strcat(seat_list, seat_info);
                         }
+
+                        // 合併並格式化輸出
+                        sprintf(booking_info, 
+                                "Train %d from %s to %s. Tickets: %d. Seats: %s\n", 
+                                record->train_index, 
+                                line[record->start_index], 
+                                line[record->dest_index], 
+                                record->tickets, 
+                                seat_list);
+                        strcat(response, booking_info);
                     }
                 }
 
-                // 解鎖
-                semop(sem_id, &v_op, 1);
+                semop(sem_id, &v_op, 1); // 釋放資源鎖
 
                 if (!found) {
                     strcpy(response, "No bookings found for this ID.\n");
-                } else {
-                    // 把 merged[] 的結果組合在 response
-                    for (int m = 0; m < 50; m++) {
-                        if (merged[m].used == 1) {
-                            char booking_info[2048];
-                            
-                            // 先把座位號們寫成字串
-                            char seat_list[1000] = "";
-                            for (int s = 0; s < merged[m].seat_count; s++) {
-                                char seat_buf[16];
-                                sprintf(seat_buf, "%d", merged[m].seat_numbers[s]);
-                                if (s > 0) strcat(seat_list, ", ");
-                                strcat(seat_list, seat_buf);
-                            }
-
-                            sprintf(booking_info,
-                                    "Train %d from %s to %s. Tickets: %d. Seats: %s\n",
-                                    merged[m].train_index,
-                                    line[ merged[m].start_index ],
-                                    line[ merged[m].dest_index ],
-                                    merged[m].total_tickets,
-                                    seat_list
-                            );
-                            strcat(response, booking_info);
-                        }
-                    }
                 }
 
-                // 傳回給客戶端
-                send(client_sock, response, strlen(response), 0);
+                send(client_sock, response, strlen(response), 0); // 回傳結果給客戶端
             } else if (strncmp(buffer, "book_ticket", 11) == 0) {
                 char start[20], dest[20];
                 int train_index, start_index, dest_index, tickets, contiguous;
@@ -711,44 +525,10 @@ void handle_client(int client_sock) {
                     char response[BUFFER_SIZE] = "Booking failed. Not enough seats.\n";
                     send(client_sock, response, strlen(response), 0);
                 }
-            } else if (strncmp(buffer, "cancel_order", 12) == 0) {
-                char id[20], start[20], dest[20];
-                int train_index, cancel_num;
-
-                // 新格式: cancel_order <ID> <train_index> <start> <dest> <cancel_num>
-                sscanf(buffer + 13, "%s %d %s %s %d", id, &train_index, start, dest, &cancel_num);
-
-                printf("[DEBUG] cancel_order: ID=%s, train_index=%d, start=%s, dest=%s, cancel_num=%d\n",
-                    id, train_index, start, dest, cancel_num);
-
-                // 解析站名 => 取得起迄站索引
-                int start_index = handle_point(start);
-                int dest_index  = handle_point(dest);
-
-                // 如果解析失敗 => 回傳錯誤
-                if (start_index == -1 || dest_index == -1) {
-                    char msg[128];
-                    sprintf(msg, "Cancel order fail. Invalid station name.\n");
-                    send(client_sock, msg, strlen(msg), 0);
-                    continue;
-                }
-
-                // 呼叫新的 cancel_order
-                if (cancel_order(id, train_index, start_index, dest_index, cancel_num) == 0) {
-                    // 成功
-                    char msg[128];
-                    sprintf(msg, "Cancel order success. ID=%s, Train=%d, Start=%s, Dest=%s, Cancel=%d\n",
-                            id, train_index, start, dest, cancel_num);
-                    send(client_sock, msg, strlen(msg), 0);
-                } else {
-                    // 失敗
-                    char msg[128];
-                    sprintf(msg, "Cancel order fail. ID=%s, Train=%d, Start=%s, Dest=%s, Cancel=%d\n",
-                            id, train_index, start, dest, cancel_num);
-                    send(client_sock, msg, strlen(msg), 0);
-                }
+            } else {
+                const char *error_msg = "Unknown command\n";
+                send(client_sock, error_msg, strlen(error_msg), 0);
             }
-
         }
 
         close(client_sock);
@@ -795,8 +575,8 @@ int main(int argc, char *argv[]) {
 
     int port = atoi(argv[1]);
 
-    key_t key = ftok("train_subserver.c", 1);
-    key_t sem_key = ftok("server.c", 2);
+    key_t key = ftok("HSR_subserver.c", 1);
+    key_t sem_key = ftok("HSR_subserver.c", 2);
     shm_id = shmget(key, sizeof(TrainServer), IPC_CREAT | 0666);
     if (shm_id == -1) {
         perror("shmget failed");
