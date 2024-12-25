@@ -95,13 +95,12 @@ int isEarlier(TrainTime *t1, TrainTime *t2) {
     return t1->minute <= t2->minute;
 }
 
-
 void initialize_train_data() {
-    for (int i = 0; i < TRAIN_AMOUNT; i++) {
+    for (int i = 0; i < TRAIN_AMOUNT/2; i++) {
         int direction = (i < TRAIN_AMOUNT / 2) ? 1 : -1;
         shared_data->direction[i] = direction;
 
-        int start_hour = (i % (TRAIN_AMOUNT / 2)) + 6; 
+        int start_hour = ((i % (TRAIN_AMOUNT / 2)) + 21)%24; 
 
         for (int j = 0; j < POINT_AMOUNT; j++) {
             int point = (direction == 1) ? j : POINT_AMOUNT - j - 1;
@@ -109,13 +108,33 @@ void initialize_train_data() {
             shared_data->schedule[i][point].year = 2024;
             shared_data->schedule[i][point].month = 12;
             shared_data->schedule[i][point].day = 21;
-            shared_data->schedule[i][point].hour = start_hour + j*3;
+            shared_data->schedule[i][point].hour = (start_hour + j*3)%24;
             shared_data->schedule[i][point].minute = 0;
 
             shared_data->seats[i][j] = SEAT_AMOUNT; 
             // printf("Train%d %s %d\n", i, line[point], shared_data->schedule[i][point].hour);
         }
     }
+    for (int i = TRAIN_AMOUNT/2; i < TRAIN_AMOUNT; i++) {
+        int direction = (i < TRAIN_AMOUNT / 2) ? 1 : -1;
+        shared_data->direction[i] = direction;
+
+        int start_hour = ((i % (TRAIN_AMOUNT / 2)) + 15)%24; 
+
+        for (int j = 0; j < POINT_AMOUNT; j++) {
+            int point = (direction == 1) ? j : POINT_AMOUNT - j - 1;
+
+            shared_data->schedule[i][point].year = 2024;
+            shared_data->schedule[i][point].month = 12;
+            shared_data->schedule[i][point].day = 21;
+            shared_data->schedule[i][point].hour = (start_hour + j*3)%24;
+            shared_data->schedule[i][point].minute = 0;
+
+            shared_data->seats[i][j] = SEAT_AMOUNT; 
+            // printf("Train%d %s %d\n", i, line[point], shared_data->schedule[i][point].hour);
+        }
+    }
+
     for (int i = 0; i < TRAIN_AMOUNT; i++) {
         shared_data->total_seats[i] = SEAT_AMOUNT; // 初始化每列火車的總座位數
     }
