@@ -457,6 +457,7 @@ void handle_client(int client_sock) {
                         break;
                     }
                 }
+                send(client_sock, response, strlen(response), 0);
             } else if (strncmp(buffer, "check_order", 11) == 0) {
                 // 提取用戶輸入的 ID
                 char id[20];
