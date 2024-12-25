@@ -108,8 +108,13 @@ void initialize_train_data() {
 
             shared_data->schedule[i][point].year = 2024;
             shared_data->schedule[i][point].month = 12;
-            shared_data->schedule[i][point].day = 21;
-            shared_data->schedule[i][point].hour = (start_hour + j*3)%24;
+            if (start_hour + j*3 > 23){
+                shared_data->schedule[i][point].day = 21;
+                shared_data->schedule[i][point].hour = (start_hour + j*3)%24;
+            } else{
+                shared_data->schedule[i][point].day = 20;
+                shared_data->schedule[i][point].hour = (start_hour + j*3)%24;
+            }
             shared_data->schedule[i][point].minute = 0;
 
             shared_data->seats[i][j] = SEAT_AMOUNT; 
@@ -127,8 +132,13 @@ void initialize_train_data() {
 
             shared_data->schedule[i][point].year = 2024;
             shared_data->schedule[i][point].month = 12;
-            shared_data->schedule[i][point].day = 21;
-            shared_data->schedule[i][point].hour = (start_hour + j*3)%24;
+            if (start_hour + j*3 > 23){
+                shared_data->schedule[i][point].day = 22;
+                shared_data->schedule[i][point].hour = (start_hour + j*3)%24;
+            } else{
+                shared_data->schedule[i][point].day = 21;
+                shared_data->schedule[i][point].hour = (start_hour + j*3)%24;
+            }
             shared_data->schedule[i][point].minute = 0;
 
             shared_data->seats[i][j] = SEAT_AMOUNT; 
@@ -606,7 +616,7 @@ void handle_client(int client_sock) {
                         int farest_index = calculate_farest_dest(i, start_index, dest_index, amount);
                         int remaining_seats = calculate_remaining_seats(i, start_index, farest_index);
                         char temp[512], time[20];
-                        encode_time(shared_data->schedule[i], time);
+                        encode_time(&shared_data->schedule[i][farest_index], time);
                         sprintf(temp, "Farest Train %d from %s to %s (Seats: %d) at %s\n",
                                 i, line[start_index], line[farest_index], remaining_seats, time);
                         strcat(response, temp);
@@ -816,7 +826,7 @@ int main(int argc, char *argv[]) {
     int port = atoi(argv[1]);
 
     key_t key = ftok("train_subserver.c", 1);
-    key_t sem_key = ftok("server.c", 2);
+    key_t sem_key = ftok("train_subserver.c", 2);
     shm_id = shmget(key, sizeof(TrainServer), IPC_CREAT | 0666);
     if (shm_id == -1) {
         perror("shmget failed");
