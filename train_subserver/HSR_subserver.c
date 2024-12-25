@@ -411,6 +411,87 @@ int update_seats(int train_index, int start, int dest, int tickets, const char *
     return 0;
 }
 
+int cancel_order(const char *id, int train_index, int cancel_num) {
+    // 1) 取得鎖
+    semop(sem_id, &p_op, 1);
+
+    // 2) 在所有已存在的訂單中尋找符合者 (ID & 列車班次)
+    int found_index = -1;
+    for (int i = 0; i < shared_data->booking_count; i++) {
+        BookingRecord *rec = &shared_data->bookings[i];
+        if ((strcmp(rec->id, id) == 0) && (rec->train_index == train_index)) {
+            found_index = i;
+            break;
+        }
+    }
+
+    // 若找不到 => 直接回傳失敗
+    if (found_index == -1) {
+        semop(sem_id, &v_op, 1);
+        return -1; 
+    }
+
+    BookingRecord *record = &shared_data->bookings[found_index];
+
+    // 3) 檢查要取消的人數是否超過原訂票數
+    if (cancel_num > record->tickets) {
+        semop(sem_id, &v_op, 1);
+        return -1; // 取消的數量不合法
+    }
+
+    // 4) 開始釋放座位 (從後面開始退 cancel_num 張)
+    //    假設 BookingRecord 裡的 seat_numbers 依照你之前訂時的順序存放
+    //    也假設 partial cancel 只是簡單處理 => 從尾端退
+    int start_seg = record->start_index;
+    int dest_seg  = record->dest_index;
+
+    // 從後往前取 seat_numbers
+    int start_idx = record->tickets - cancel_num; 
+    // e.g. 如果 originally 8 張，cancel_num=6，就從 seat_numbers[2..7] 退掉
+
+    for (int i = start_idx; i < record->tickets; i++) {
+        int seat_id = record->seat_numbers[i]; 
+        // 釋放所有區間 (不管順向/逆向，跟你 update_seats() 時一致)
+        if (start_seg < dest_seg) {
+            // 順向
+            for (int seg = start_seg; seg < dest_seg; seg++) {
+                shared_data->seat_allocation[train_index][seat_id][seg] = 0;
+                shared_data->seats[train_index][seg] += 1;
+            }
+        } else {
+            // 逆向
+            for (int seg = start_seg - 1; seg >= dest_seg; seg--) {
+                shared_data->seat_allocation[train_index][seat_id][seg] = 0;
+                shared_data->seats[train_index][seg] += 1;
+            }
+        }
+    }
+
+    // 5) 若是全部取消 => 從 bookings 裡移除這筆
+    if (cancel_num == record->tickets) {
+        // 把最後一筆訂單移到被移除的那筆上，並 booking_count--
+        // 避免中間空洞
+        shared_data->booking_count--;
+        if (found_index != shared_data->booking_count) {
+            // 將最後一筆搬到 found_index 位置
+            shared_data->bookings[found_index] = shared_data->bookings[shared_data->booking_count];
+        }
+    } else {
+        // 部分取消 => 更新 tickets 與 seat_numbers
+        record->tickets -= cancel_num;
+        // seat_numbers 從尾巴開始刪掉 cancel_num 張
+        // 簡單做法：不用真的 free，直接把 record->tickets 以後的 seat_numbers 覆蓋掉 
+        //  (有需要可以設 -1 或 0 表示無效)
+        for (int i = 0; i < cancel_num; i++) {
+            int idx = record->tickets + i; 
+            record->seat_numbers[idx] = -1; // 或者設0，表示無效
+        }
+    }
+
+    // 6) 釋放鎖，回傳成功
+    semop(sem_id, &v_op, 1);
+    return 0;
+}
 
 // 處理客戶端請求
 void handle_client(int client_sock) {
@@ -459,13 +540,12 @@ void handle_client(int client_sock) {
                 }
                 send(client_sock, response, strlen(response), 0);
             } else if (strncmp(buffer, "check_order", 11) == 0) {
-                // 提取用戶輸入的 ID
                 char id[20];
                 sscanf(buffer + 12, "%s", id);
                 printf("Querying bookings for ID: %s\n", id);
                 fflush(stdout);
 
-                semop(sem_id, &p_op, 1); // 獲取資源鎖
+                semop(sem_id, &p_op, 1);
 
                 char response[BUFFER_SIZE] = "";
                 int found = 0;
@@ -524,6 +604,29 @@ void handle_client(int client_sock) {
                 } else {
                     char response[BUFFER_SIZE] = "Booking failed. Not enough seats.\n";
                     send(client_sock, response, strlen(response), 0);
+                }
+            } else if (strncmp(buffer, "cancel_order", 12) == 0) {
+                char id[20];
+                int train_index, cancel_num;
+                // 格式: cancel_order <ID> <train_index> <cancel_num>
+                sscanf(buffer + 13, "%s %d %d", id, &train_index, &cancel_num);
+
+                printf("[DEBUG] cancel_order: ID=%s, train_index=%d, cancel_num=%d\n", 
+                        id, train_index, cancel_num);
+
+                // 呼叫我們剛剛寫好的函式
+                if (cancel_order(id, train_index, cancel_num) == 0) {
+                    // 成功
+                    char msg[128];
+                    sprintf(msg, "Cancel order success. ID=%s, Train=%d, Cancel=%d\n",
+                            id, train_index, cancel_num);
+                    send(client_sock, msg, strlen(msg), 0);
+                } else {
+                    // 失敗
+                    char msg[128];
+                    sprintf(msg, "Cancel order fail. ID=%s, Train=%d, Cancel=%d\n",
+                            id, train_index, cancel_num);
+                    send(client_sock, msg, strlen(msg), 0);
                 }
             } else {
                 const char *error_msg = "Unknown command\n";
