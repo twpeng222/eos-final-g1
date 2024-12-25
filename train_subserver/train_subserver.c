@@ -614,13 +614,29 @@ void handle_client(int client_sock) {
                 for (int i = 0; i < TRAIN_AMOUNT; i++) {
                     if (train_list[i]) {
                         int farest_index = calculate_farest_dest(i, start_index, dest_index, amount);
-                        int remaining_seats = calculate_remaining_seats(i, start_index, farest_index);
-                        char temp[512], time[20];
-                        encode_time(&shared_data->schedule[i][farest_index], time);
-                        sprintf(temp, "Farest Train %d from %s to %s (Seats: %d) at %s\n",
-                                i, line[start_index], line[farest_index], remaining_seats, time);
-                        strcat(response, temp);
-                        break;
+                        // int remaining_seats = calculate_remaining_seats(i, start_index, farest_index);
+                        // char temp[512], time[20], time2[20];
+                        // encode_time(&shared_data->schedule[i][farest_index], time);
+                        // encode_time(&shared_data->schedule[i][start_index], time2);
+                        // sprintf(temp, "Farest Train %d from %s to %s (Seats: %d) at %s to %s\n",
+                        //         i, line[start_index], line[farest_index], remaining_seats, time2,time);
+                        // strcat(response, temp);
+                        // break;
+                        if (farest_index == start_index) {
+                            char temp[512];
+                            sprintf(temp, "No train available!");
+                            strcat(response, temp);
+                            break;
+                        } else{
+                            int remaining_seats = calculate_remaining_seats(i, start_index, farest_index);
+                            char temp[512], time[20], time2[20];
+                            encode_time(&shared_data->schedule[i][farest_index], time);
+                            encode_time(&shared_data->schedule[i][start_index], time2);
+                            sprintf(temp, "Farest Train %d from %s to %s (Seats: %d) at %s to %s\n",
+                                    i, line[start_index], line[farest_index], remaining_seats, time2,time);
+                            strcat(response, temp);
+                            break;
+                        }
                     }
                 }
                 send(client_sock, response, strlen(response), 0);
