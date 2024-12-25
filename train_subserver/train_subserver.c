@@ -8,15 +8,18 @@
 #include <sys/sem.h>
 #include <signal.h>
 #include <sys/time.h>
+#include <sys/wait.h>
 
 #define BUFFER_SIZE 512
 #define TRAIN_AMOUNT 10 // 10 台火車
 #define POINT_AMOUNT 5
 #define SEAT_AMOUNT 10
+#define MAX_BOOKINGS 1000
 
 
 int shm_id;
 int sem_id;
+
 
 typedef struct {
     int year;
@@ -27,12 +30,26 @@ typedef struct {
 } TrainTime;
 
 typedef struct {
-    int seats[TRAIN_AMOUNT][POINT_AMOUNT - 1];
+    char id[20];         // 訂票人的 ID
+    int train_index;     // 火車編號
+    int start_index;     // 起點站索引
+    int dest_index;      // 終點站索引
+    int tickets;         // 訂票數量
+    int seat_numbers[10]; // 座位號 (假設最多一次訂10張票)
+} BookingRecord;
+
+typedef struct {
+    int seats[TRAIN_AMOUNT][POINT_AMOUNT - 1]; // 區間座位數
+    int total_seats[TRAIN_AMOUNT];            // 每列火車的總可用座位數
+    int seat_allocation[TRAIN_AMOUNT][SEAT_AMOUNT][POINT_AMOUNT - 1]; 
     TrainTime schedule[TRAIN_AMOUNT][POINT_AMOUNT];
     int direction[TRAIN_AMOUNT];
+    BookingRecord bookings[MAX_BOOKINGS];
+    int booking_count;
 } TrainServer;
 
 TrainServer *shared_data;
+
 const char line[5][20] = {"Taipei", "Taoyuan", "Taichung", "Tainan", "Kaohsiung"};
 struct sembuf p_op = {0, -1, SEM_UNDO}; 
 struct sembuf v_op = {0, 1, SEM_UNDO}; 
@@ -89,6 +106,9 @@ void initialize_train_data() {
             shared_data->seats[i][j] = SEAT_AMOUNT; 
             // printf("Train%d %s %d\n", i, line[point], shared_data->schedule[i][point].hour);
         }
+    }
+    for (int i = 0; i < TRAIN_AMOUNT; i++) {
+        shared_data->total_seats[i] = SEAT_AMOUNT; // 初始化每列火車的總座位數
     }
 }
 
@@ -154,24 +174,6 @@ void search_train(int train_list[TRAIN_AMOUNT], int start, int dest, TrainTime *
             train_list[i] = 0;
         }
     }
-    // TrainTime* temp;
-    // int flag = 0;
-    // for (int i = 0; i < TRAIN_AMOUNT; i++){
-    //     // if (i == 0){
-    //     //     temp = &shared_data->schedule[i][start];
-    //     // }
-    //     if (train_list[i]){
-    //         if (flag == 0){
-    //             flag = 1;
-    //             temp = &shared_data->schedule[i][start];
-    //         }
-    //         if (isEarlier(&shared_data->schedule[i][start],temp)){
-    //             train_list[i] = 0;
-    //         } else{
-    //             temp = &shared_data->schedule[i][start];
-    //         }
-    //     }
-    // }
 }
 
 
@@ -205,51 +207,224 @@ void search_transfer(int start, int dest, TrainTime *time, char *response) {
     }
 }
 
-
-
-int update_seats(int train_index, int start, int dest, int tickets) {
+void query_bookings_by_id(const char *id) {
     semop(sem_id, &p_op, 1);
 
-    if (start < dest) {
-        for (int i = start; i < dest; i++) {
-            if (shared_data->seats[train_index][i] < tickets) {
-                semop(sem_id, &v_op, 1); 
-                return -1; }
-        }
-        for (int i = start; i < dest; i++) {
-            shared_data->seats[train_index][i] -= tickets;
-        }
-    } else {
-        for (int i = start - 1; i >= dest; i--) {
-            if (shared_data->seats[train_index][i] < tickets) {
-                semop(sem_id, &v_op, 1); 
-                return -1;
+    printf("Bookings for ID: %s\n", id);
+    for (int i = 0; i < shared_data->booking_count; i++) {
+        BookingRecord *record = &shared_data->bookings[i];
+        if (strcmp(record->id, id) == 0) {
+            printf("Change\n");
+            printf("Train %d from %s to %s. Tickets: %d. Seats: ",
+                   record->train_index,
+                   line[record->start_index],
+                   line[record->dest_index],
+                   record->tickets);
+            for (int j = 0; j < record->tickets; j++) {
+                printf("%d ", record->seat_numbers[j]);
             }
-        }
-        for (int i = start - 1; i >= dest; i--) {
-            shared_data->seats[train_index][i] -= tickets;
+            printf("\n");
         }
     }
 
-    semop(sem_id, &v_op, 1); 
-    return 0; 
+    semop(sem_id, &v_op, 1);
 }
 
+int update_seats(int train_index, int start, int dest, int tickets, const char *id, int contiguous) {
+    semop(sem_id, &p_op, 1); // 取得鎖
+
+    int seat_numbers[10];
+    int seat_count = 0;
+
+    // 0) 如果起終點相同 => 直接失敗
+    if (start == dest) {
+        semop(sem_id, &v_op, 1);
+        return -1;
+    }
+
+    printf("[DEBUG] update_seats: train=%d, start=%d, dest=%d, tickets=%d, id=%s\n",
+           train_index, start, dest, tickets, id);
+
+    // ----------------------------- 
+    // (A) 分兩段: 順向 or 逆向
+    // -----------------------------
+    if (start < dest) {
+        // 先檢查每段 seats[i] 是否 >= tickets
+        for (int i = start; i < dest; i++) {
+            if (shared_data->seats[train_index][i] < tickets) {
+                printf("[DEBUG] seats[%d][%d] not enough => fail\n", train_index, i);
+                semop(sem_id, &v_op, 1);
+                return -1;
+            }
+        }
+
+        // 開始分配座位 (contiguous / non-contiguous)
+        if (contiguous) {
+            // 找連續座位 seat=0..(SEAT_AMOUNT-tickets)
+            for (int seat = 0; seat <= SEAT_AMOUNT - tickets; seat++) {
+                int available = 1;
+                // 檢查在 i=[start..dest-1]，seat..seat+(tickets-1) 是否都為0
+                for (int i = start; i < dest && available; i++) {
+                    for (int j = 0; j < tickets; j++) {
+                        if (shared_data->seat_allocation[train_index][seat + j][i] != 0) {
+                            available = 0;
+                            break;
+                        }
+                    }
+                }
+                if (available) {
+                    // 分配
+                    for (int i = start; i < dest; i++) {
+                        for (int j = 0; j < tickets; j++) {
+                            shared_data->seat_allocation[train_index][seat + j][i] = 1;
+                        }
+                        shared_data->seats[train_index][i] -= tickets;
+                    }
+                    for (int j = 0; j < tickets; j++) {
+                        seat_numbers[seat_count++] = seat + j;
+                    }
+                    break; // 分配成功 => 跳出
+                }
+            }
+        } else {
+            // non-contiguous
+            for (int seat = 0; seat < SEAT_AMOUNT && seat_count < tickets; seat++) {
+                int available = 1;
+                // 檢查 i=[start..dest-1]
+                for (int i = start; i < dest; i++) {
+                    if (shared_data->seat_allocation[train_index][seat][i] != 0) {
+                        available = 0;
+                        break;
+                    }
+                }
+                if (available) {
+                    // 分配
+                    for (int i = start; i < dest; i++) {
+                        shared_data->seat_allocation[train_index][seat][i] = 1;
+                    }
+                    shared_data->seats[train_index][start] -= tickets;
+                    seat_numbers[seat_count++] = seat;
+                }
+            }
+        }
+    } 
+    else {
+        // 逆向: start>dest
+        // 檢查 seats[i = start-1..dest] 是否足夠 (站 4->3->2->1->0)
+        for (int i = start - 1; i >= dest; i--) {
+            if (shared_data->seats[train_index][i] < tickets) {
+                printf("[DEBUG] seats[%d][%d] not enough => fail\n", train_index, i);
+                semop(sem_id, &v_op, 1);
+                return -1;
+            }
+        }
+
+        // 分配座位
+        if (contiguous) {
+            for (int seat = 0; seat <= SEAT_AMOUNT - tickets; seat++) {
+                int available = 1;
+                // 這邊 i= start-1..dest
+                for (int i = start - 1; i >= dest && available; i--) {
+                    for (int j = 0; j < tickets; j++) {
+                        if (shared_data->seat_allocation[train_index][seat + j][i] != 0) {
+                            available = 0;
+                            break;
+                        }
+                    }
+                }
+                if (available) {
+                    // 分配
+                    for (int i = start - 1; i >= dest; i--) {
+                        for (int j = 0; j < tickets; j++) {
+                            shared_data->seat_allocation[train_index][seat + j][i] = 1;
+                        }
+                        shared_data->seats[train_index][i] -= tickets;
+                    }
+                    for (int j = 0; j < tickets; j++) {
+                        seat_numbers[seat_count++] = seat + j;
+                    }
+                    break;
+                }
+            }
+        } else {
+            for (int seat = 0; seat < SEAT_AMOUNT && seat_count < tickets; seat++) {
+                int available = 1;
+                // 檢查 i=[start-1..dest]
+                for (int i = start - 1; i >= dest; i--) {
+                    if (shared_data->seat_allocation[train_index][seat][i] != 0) {
+                        available = 0;
+                        break;
+                    }
+                }
+                if (available) {
+                    // 分配
+                    for (int i = start - 1; i >= dest; i--) {
+                        shared_data->seat_allocation[train_index][seat][i] = 1;
+                    }
+                    shared_data->seats[train_index][start - 1] -= tickets;
+                    seat_numbers[seat_count++] = seat;
+                }
+            }
+        }
+    }
+
+    // 若 seat_count < tickets => 回滾
+    if (seat_count < tickets) {
+        printf("[DEBUG] seat_count=%d < tickets=%d => rollback\n", seat_count, tickets);
+        // 回滾: 把已經分出去的 seat 全部釋放掉
+        if (start < dest) {
+            for (int i = start; i < dest; i++) {
+                for (int k = 0; k < seat_count; k++) {
+                    int s = seat_numbers[k];
+                    shared_data->seat_allocation[train_index][s][i] = 0;
+                }
+                shared_data->seats[train_index][i] += tickets;
+            }
+        } else {
+            for (int i = start - 1; i >= dest; i--) {
+                for (int k = 0; k < seat_count; k++) {
+                    int s = seat_numbers[k];
+                    shared_data->seat_allocation[train_index][s][i] = 0;
+                }
+                shared_data->seats[train_index][i] += tickets;
+            }
+        }
+        semop(sem_id, &v_op, 1);
+        return -1;
+    }
+
+    // 記錄訂票資訊
+    if (shared_data->booking_count < MAX_BOOKINGS) {
+        BookingRecord *record = &shared_data->bookings[shared_data->booking_count];
+        strcpy(record->id, id);
+        record->train_index = train_index;
+        record->start_index = start;
+        record->dest_index = dest;
+        record->tickets = tickets;
+        for (int i = 0; i < tickets; i++) {
+            record->seat_numbers[i] = seat_numbers[i];
+        }
+        shared_data->booking_count++;
+    }
+
+    semop(sem_id, &v_op, 1); // 釋放鎖
+    return 0;
+}
 
 
 // 處理客戶端請求
 void handle_client(int client_sock) {
     char buffer[BUFFER_SIZE];
     int bytes_read;
-    pid_t pid=fork();
-    if (pid>0) {
+    pid_t pid = fork();
+    if (pid > 0) {
         while ((bytes_read = recv(client_sock, buffer, BUFFER_SIZE, 0)) > 0) {
             buffer[bytes_read] = '\0';
             printf("check_schedule");
             fflush(stdout);
+
             if (strncmp(buffer, "check_schedule", 14) == 0) {
-                
-                
+                // 處理 check_schedule 指令的邏輯
                 char start[20], dest[20], time_str[20];
                 TrainTime start_time;
                 int start_index, dest_index, amount;
@@ -269,37 +444,78 @@ void handle_client(int client_sock) {
 
                 search_train(train_list, start_index, dest_index, &start_time);
 
-                // char response[BUFFER_SIZE] = "Available trains:\n";
                 char response[BUFFER_SIZE] = "";
                 for (int i = 0; i < TRAIN_AMOUNT; i++) {
                     if (train_list[i]) {
-                        int farest_index = calculate_farest_dest(i, start_index, dest_index,amount);
+                        int farest_index = calculate_farest_dest(i, start_index, dest_index, amount);
                         int remaining_seats = calculate_remaining_seats(i, start_index, farest_index);
-                        char temp[512],time[20];
-                        encode_time(shared_data->schedule[i],time);
+                        char temp[512], time[20];
+                        encode_time(shared_data->schedule[i], time);
                         sprintf(temp, "Farest Train %d from %s to %s (Seats: %d) at %s\n",
-                                i, line[start_index],line[farest_index], remaining_seats, time);
+                                i, line[start_index], line[farest_index], remaining_seats, time);
                         strcat(response, temp);
                         break;
                     }
                 }
+            } else if (strncmp(buffer, "check_order", 11) == 0) {
+                // 提取用戶輸入的 ID
+                char id[20];
+                sscanf(buffer + 12, "%s", id);
+                printf("Querying bookings for ID: %s\n", id);
+                fflush(stdout);
 
-                // strcat(response, "\nTransfer options:\n");
-                // search_transfer(start_index, dest_index, &start_time, response);
+                semop(sem_id, &p_op, 1); // 獲取資源鎖
 
-                send(client_sock, response, strlen(response), 0);
+                char response[BUFFER_SIZE] = "";
+                int found = 0;
+
+                // 遍歷所有訂單，按起點、終點和列車班次進行分組
+                for (int i = 0; i < shared_data->booking_count; i++) {
+                    BookingRecord *record = &shared_data->bookings[i];
+                    if (strcmp(record->id, id) == 0) {
+                        found = 1;
+
+                        // 格式化每筆訂單
+                        char booking_info[1000];
+                        char seat_list[BUFFER_SIZE] = "";
+                        for (int j = 0; j < record->tickets; j++) {
+                            char seat_info[10];
+                            sprintf(seat_info, "%d", record->seat_numbers[j]);
+                            if (j > 0) strcat(seat_list, ", "); // 添加逗號分隔座位號
+                            strcat(seat_list, seat_info);
+                        }
+
+                        // 合併並格式化輸出
+                        sprintf(booking_info, 
+                                "Train %d from %s to %s. Tickets: %d. Seats: %s\n", 
+                                record->train_index, 
+                                line[record->start_index], 
+                                line[record->dest_index], 
+                                record->tickets, 
+                                seat_list);
+                        strcat(response, booking_info);
+                    }
+                }
+
+                semop(sem_id, &v_op, 1); // 釋放資源鎖
+
+                if (!found) {
+                    strcpy(response, "No bookings found for this ID.\n");
+                }
+
+                send(client_sock, response, strlen(response), 0); // 回傳結果給客戶端
             } else if (strncmp(buffer, "book_ticket", 11) == 0) {
                 char start[20], dest[20];
-                int train_index, start_index, dest_index, tickets;
+                int train_index, start_index, dest_index, tickets, contiguous;
                 char id[20];
-                sscanf(buffer + 12, "%d %s %s %d %s", &train_index,start, dest, &tickets, id);
-                printf("receive %d %s %s %d %s", train_index, start, dest, tickets, id);
+                sscanf(buffer + 12, "%d %s %s %d %s %d", &train_index, start, dest, &tickets, id, &contiguous);
+                printf("receive %d %s %s %d %s %d\n", train_index, start, dest, tickets, id, contiguous);
                 fflush(stdout);
 
                 start_index = handle_point(start);
                 dest_index = handle_point(dest);
 
-                if (update_seats(train_index, start_index, dest_index, tickets) == 0) {
+                if (update_seats(train_index, start_index, dest_index, tickets, id, contiguous) == 0) {
                     char response[BUFFER_SIZE];
                     sprintf(response, "Booking confirmed for Train %d from %s to %s. Tickets: %d. ID: %s\n",
                             train_index, line[start_index], line[dest_index], tickets, id);
@@ -318,12 +534,43 @@ void handle_client(int client_sock) {
     }
 }
 
+void cleanup() {
+    // 刪除共享記憶體
+    if (shmdt(shared_data) == -1) {
+        perror("shmdt failed");
+    }
+
+    if (shmctl(shm_id, IPC_RMID, NULL) == -1) {
+        perror("shmctl failed");
+    }
+
+    // 刪除信號量
+    if (semctl(sem_id, 0, IPC_RMID) == -1) {
+        perror("semctl failed");
+    }
+
+    printf("\nShared memory and semaphore removed. Exiting.\n");
+    exit(EXIT_SUCCESS);
+}
+
+void signal_handler(int signal) {
+    if (signal == SIGINT) {
+        cleanup();
+    }
+}
+
+void handler(int signum) {
+    (void)signum;
+    while (waitpid(-1, NULL, WNOHANG) > 0);
+}
 
 int main(int argc, char *argv[]) {
     if (argc != 2) {
         fprintf(stderr, "Usage: %s <port>\n", argv[0]);
         exit(EXIT_FAILURE);
     }
+    signal(SIGINT, signal_handler);
+    signal(SIGCHLD, handler);
 
     int port = atoi(argv[1]);
 
