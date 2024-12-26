@@ -6,6 +6,20 @@
 
 #define BUFFER_SIZE 512
 
+const char Points[8][20] = {"Taitung", "Hualien", "Yilan", "Taipei", "Taoyuan", "Taichung", "Tainan", "Kaohsiung"};
+
+//void clear_input_buffer() {
+//    int c;
+//    while ((c = getchar()) != '\n' && c != EOF); // 清除直到換行符或 EOF
+//}
+
+void show_stations() {
+    printf("Available Stations:\n");
+    for (int i = 0; i < 8; i++) {
+        printf("[%d] %s\n", i, Points[i]);
+    }
+}
+
 void interact_with_server(int sock) {
     char buffer[BUFFER_SIZE];
     char response[BUFFER_SIZE];
@@ -14,15 +28,25 @@ void interact_with_server(int sock) {
     printf("To quit, type 'quit'.\n");
 
     while (1) {
-        // 提示使用者輸入訂票資訊
-        printf("\nEnter booking request (format: <start_idx> <dest_idx> <time> <amount> <ID>):\n");
-        fgets(buffer, BUFFER_SIZE, stdin);
+    	// 顯示站點及其對應索引值
+        show_stations();
 
-        // 去除輸入的換行符
-        buffer[strcspn(buffer, "\n")] = '\0';
+        // 提示使用者輸入訂票資訊
+	printf("\nEnter booking request (format: <start_idx> <dest_idx> <time> <amount> <ID>):\n");
+	memset(buffer, 0, BUFFER_SIZE);
+	fgets(buffer, BUFFER_SIZE, stdin);
+
+	// 去除輸入的換行符
+	buffer[strcspn(buffer, "\n")] = '\0';
+
+	// 檢查輸入是否為空
+	if (strlen(buffer) == 0) {
+	    // printf("Empty input. Please try again.\n");
+	    continue;
+	}
 
         // 如果輸入 quit，通知伺服器並退出程式
-        if (strcmp(buffer, "quit") == 0) {
+        if (strncmp(buffer, "quit", 4) == 0) {
             // 向伺服器發送 quit 通知
             if (write(sock, buffer, strlen(buffer)) < 0) {
                 perror("Failed to send quit message to server");
@@ -38,11 +62,24 @@ void interact_with_server(int sock) {
         }
 
         // 接收伺服器回應
-        int read_size = read(sock, response, BUFFER_SIZE - 1);
-        if (read_size <= 0) {
-            printf("Disconnected from server.\n");
-            break;
-        }
+        memset(response, 0, BUFFER_SIZE);
+        
+        int read_size;
+        int retries = 0;
+        int retry_limit = 5;
+    	while (retries < retry_limit) {
+            read_size = read(sock, response, BUFFER_SIZE);
+            if (read_size > 0) {
+                retries = 0;
+                break;
+            } else if (read_size == 0) {
+            	retries ++;
+            	continue;
+            } else {
+	   	perror("Error reading from socket");
+            	break;
+            }
+	}
 
         response[read_size] = '\0'; // 確保字串結尾
         printf("Server response:\n%s\n", response);
@@ -67,6 +104,7 @@ int main() {
     server.sin_family = AF_INET;
     server.sin_port = htons(7777); // 與伺服器設定相同的埠號
     server.sin_addr.s_addr = inet_addr("127.0.0.1"); // 本地回環地址
+    //server.sin_addr.s_addr = INADDR_ANY;
 
     // 連接伺服器
     if (connect(sock, (struct sockaddr*)&server, sizeof(server)) < 0) {

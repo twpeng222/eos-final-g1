@@ -10,9 +10,9 @@
 #define MAX_CLIENTS 10
 
 // 定義服務端地址
-#define HIGH_SPEED_IP "192.168.56.101"
+//#define HIGH_SPEED_IP "192.168.56.101"
 #define HIGH_SPEED_PORT 8881
-#define TRAIN_IP "192.168.56.101"
+//#define TRAIN_IP "192.168.56.101"
 #define TRAIN_PORT 8889
 
 // 可達站點
@@ -57,7 +57,7 @@ typedef struct {
 } book_data_t;
 
 // 連接到服務端的輔助函數
-int connect_to_server(const char* ip, int port) {
+int connect_to_server(int port) {
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock == -1) {
         perror("Could not create socket");
@@ -67,7 +67,7 @@ int connect_to_server(const char* ip, int port) {
     struct sockaddr_in server;
     server.sin_family = AF_INET;
     server.sin_port = htons(port);
-    server.sin_addr.s_addr = inet_addr(ip);
+    server.sin_addr.s_addr = INADDR_ANY;
 
     if (connect(sock, (struct sockaddr*)&server, sizeof(server)) < 0) {
         perror("Connection failed");
@@ -82,13 +82,15 @@ int connect_to_server(const char* ip, int port) {
 void check(check_data_t* check_data, int sock, int start_idx, int dest_idx, const char* time, int amount){
     char buffer[BUFFER_SIZE];
     char response[BUFFER_SIZE];
+    memset(response, 0, BUFFER_SIZE);
     sprintf(response, "check_schedule %s %s %s %d", Points[start_idx], Points[dest_idx], time, amount);
     printf("check request: %s\n", response);
-    fflush(stdout);
+    //fflush(stdout);
     write(sock, response, BUFFER_SIZE);
+    memset(buffer, 0, BUFFER_SIZE);
     read(sock, buffer, BUFFER_SIZE);
     printf("check reply: %s\n", buffer);
-    fflush(stdout);
+    //fflush(stdout);
     if(strncmp(buffer, "Farest", 6) == 0) {
         sscanf(buffer, "Farest Train %d from %s to %s (Seats: %d) at %s to %s\n",
            &check_data->train_no, check_data->start, check_data->farest_dest, &check_data->remaining_seats, check_data->depart_time, check_data->arrive_time);
@@ -106,13 +108,15 @@ void check(check_data_t* check_data, int sock, int start_idx, int dest_idx, cons
 void book(book_data_t* book_data, int sock, int train_no, int start_idx, int dest_idx, int amount, const char* ID){
     char buffer[BUFFER_SIZE];
     char response[BUFFER_SIZE];
+    memset(response, 0, BUFFER_SIZE);
     sprintf(response, "book_ticket %d %s %s %d %s %d", train_no, Points[start_idx], Points[dest_idx], amount, ID, 1);
     printf("book request: %s\n", response);
-    fflush(stdout);
+    //fflush(stdout);
     write(sock, response, BUFFER_SIZE);
+    memset(buffer, 0, BUFFER_SIZE);
     read(sock, buffer, BUFFER_SIZE);
     printf("book message: %s\n", buffer);
-    fflush(stdout);
+    //fflush(stdout);
     if (strncmp(buffer, "Booking confirmed", 17) == 0) {
         sscanf(buffer, "Booking confirmed for Train %d from %s to %s. Tickets: %d. ID: %s\n",
            &book_data->train_no, book_data->start, book_data->dest, &book_data->tickets, book_data->tickets_info);
@@ -124,7 +128,7 @@ void book(book_data_t* book_data, int sock, int train_no, int start_idx, int des
 
 void check_and_book(int ht_sock, int tr_sock, int client_sock, int start_idx, int dest_idx, const char* time, int amount, const char* ID) {
     char response[BUFFER_SIZE];
-
+    memset(response, 0, BUFFER_SIZE);
     check_data_t* train_check_data = malloc(sizeof(check_data_t));
     book_data_t* train_book_data = malloc(sizeof(book_data_t));
     check_data_t* high_check_data = malloc(sizeof(check_data_t));
@@ -141,7 +145,7 @@ void check_and_book(int ht_sock, int tr_sock, int client_sock, int start_idx, in
                      train_book_data->train_no, Points[start_idx], Points[dest_idx], amount);
             write(client_sock, response, BUFFER_SIZE);
         } else {
-            snprintf(response, BUFFER_SIZE, "No train available from %s to %s.\n", Points[start_idx], Points[dest_idx]);
+            snprintf(response, BUFFER_SIZE, "No train available start from %s to %s.\n", Points[start_idx], Points[dest_idx]);
             write(client_sock, response, BUFFER_SIZE);
         }
         free(train_check_data);
@@ -177,7 +181,7 @@ void check_and_book(int ht_sock, int tr_sock, int client_sock, int start_idx, in
         // 處理 (0-2) ~ 的情況
         check(train_check_data, tr_sock, start_idx, 4, time, amount);
         if (train_check_data->check_state == 0) {
-            snprintf(response, BUFFER_SIZE, "No train available from %s to %s.\n", Points[start_idx], Points[dest_idx]);
+            snprintf(response, BUFFER_SIZE, "No train available start from %s.\n", Points[start_idx]);
             write(client_sock, response, BUFFER_SIZE);
             free(train_check_data);
             free(train_book_data);
@@ -190,7 +194,7 @@ void check_and_book(int ht_sock, int tr_sock, int client_sock, int start_idx, in
 
         // 處理 (0-2) ~ (3-4)
         if (train_destination < 3) {
-            snprintf(response, BUFFER_SIZE, "No train available from %s to %s.\n", Points[start_idx], Points[dest_idx]);
+            snprintf(response, BUFFER_SIZE, "No train available from %s to %s.\n", Points[start_idx], Points[train_destination]);
             write(client_sock, response, BUFFER_SIZE);
         } else {
             if (train_destination == dest_idx) {
@@ -204,7 +208,7 @@ void check_and_book(int ht_sock, int tr_sock, int client_sock, int start_idx, in
                 // 處理 (0-2) ~ (5~7)
                 check(high_check_data, ht_sock, train_destination, dest_idx, train_check_data->arrive_time, amount);
                 if (high_check_data->check_state == 0) {
-                    snprintf(response, BUFFER_SIZE, "No HSR available from %s to %s.\n", Points[start_idx], Points[dest_idx]);
+                    snprintf(response, BUFFER_SIZE, "No HSR available start from %s.\n", Points[train_destination]);
                     write(client_sock, response, BUFFER_SIZE);
                 } else {
                     int high_destination = findIndex(Points, 8, high_check_data->farest_dest);
@@ -217,6 +221,10 @@ void check_and_book(int ht_sock, int tr_sock, int client_sock, int start_idx, in
                              "Second Leg:\n  High No: %d\n  From: %s\n  To: %s\n  Tickets: %d\n",
                              train_book_data->train_no, Points[start_idx], Points[train_destination], amount,
                              high_book_data->train_no, Points[train_destination], Points[dest_idx], amount);
+                        write(client_sock, response, BUFFER_SIZE);
+                    } else {
+                      	sprintf(response, "No HSR available from %s to %s.\n", Points[train_destination], Points[dest_idx]);
+                	write(client_sock, response, BUFFER_SIZE);
                     }
                 }
             }
@@ -283,7 +291,7 @@ void check_and_book(int ht_sock, int tr_sock, int client_sock, int start_idx, in
         // 處理 (5~7) ~ 的情況
         check(high_check_data, ht_sock, start_idx, 3, time, amount);
         if (high_check_data->check_state == 0) {
-            snprintf(response, BUFFER_SIZE, "No HSR available from %s to %s.\n", Points[start_idx], Points[dest_idx]);
+            snprintf(response, BUFFER_SIZE, "No HSR available start from %s.\n", Points[start_idx]);
             write(client_sock, response, BUFFER_SIZE);
             free(train_check_data);
             free(train_book_data);
@@ -296,7 +304,7 @@ void check_and_book(int ht_sock, int tr_sock, int client_sock, int start_idx, in
 
         // 處理 (5~7) ~ (3-4)
         if (high_destination > 4) {
-            snprintf(response, BUFFER_SIZE, "No HSR available from %s to %s.\n", Points[start_idx], Points[dest_idx]);
+            snprintf(response, BUFFER_SIZE, "No HSR available from %s to %s.\n", Points[start_idx], Points[4]);
             write(client_sock, response, BUFFER_SIZE);
         } else {
             if (high_destination == dest_idx) {
@@ -310,7 +318,7 @@ void check_and_book(int ht_sock, int tr_sock, int client_sock, int start_idx, in
                 // 處理 (5~7) ~ (0-2)
                 check(train_check_data, tr_sock, high_destination, dest_idx, high_check_data->arrive_time, amount);
                 if (train_check_data->check_state == 0) {
-                    snprintf(response, BUFFER_SIZE, "No train available from %s to %s.\n", Points[start_idx], Points[dest_idx]);
+                    snprintf(response, BUFFER_SIZE, "No train available from %s to %s.\n", Points[high_destination], Points[dest_idx]);
                     write(client_sock, response, BUFFER_SIZE);
                 } else {
                     int train_destination = findIndex(Points, 8, train_check_data->farest_dest);
@@ -323,6 +331,10 @@ void check_and_book(int ht_sock, int tr_sock, int client_sock, int start_idx, in
                              "Second Leg:\n  Train No: %d\n  From: %s\n  To: %s\n  Tickets: %d\n",
                              high_book_data->train_no, Points[start_idx], Points[high_destination], amount,
                              train_book_data->train_no, Points[high_destination], Points[dest_idx], amount);
+                        write(client_sock, response, BUFFER_SIZE);
+                    } else {
+                      	sprintf(response, "No train available from %s to %s.\n", Points[high_destination], Points[dest_idx]);
+                	write(client_sock, response, BUFFER_SIZE);
                     }
                 }
             }
@@ -345,7 +357,7 @@ void check_and_book(int ht_sock, int tr_sock, int client_sock, int start_idx, in
         } else if (train_check_data->check_state == 0 && start_idx == 4) {
             check(high_check_data, ht_sock, 4, 3, time, amount);
             if (high_check_data->check_state == 0) {
-                sprintf(response, "No HSR/train available from %s to %s.\n", Points[start_idx], Points[dest_idx]);
+                sprintf(response, "No HSR/train available from %s to %s.\n", Points[4], Points[3]);
                 write(client_sock, response, BUFFER_SIZE);
             } else {
                 if (dest_idx == 3) {
@@ -353,13 +365,13 @@ void check_and_book(int ht_sock, int tr_sock, int client_sock, int start_idx, in
                     snprintf(response, BUFFER_SIZE,
                      "Booking Confirmed!\n"
                      "High No: %d\nFrom: %s\nTo: %s\nTickets: %d\n",
-                     high_book_data->train_no, Points[start_idx], Points[dest_idx], amount);
+                     high_book_data->train_no, Points[4], Points[3], amount);
                     write(client_sock, response, BUFFER_SIZE);
                 } else {
                     check(train_check_data, tr_sock, 3, dest_idx, high_check_data->arrive_time, amount);
                     if (train_check_data->check_state == 1) {
-                        book(high_book_data, ht_sock, high_check_data->train_no, 3, 4, amount, ID);
-                        book(train_book_data, tr_sock, train_check_data->train_no, 4, dest_idx, amount, ID);
+                        book(high_book_data, ht_sock, high_check_data->train_no, 4, 3, amount, ID);
+                        book(train_book_data, tr_sock, train_check_data->train_no, 3, dest_idx, amount, ID);
                         snprintf(response, BUFFER_SIZE,
                              "Booking Confirmed!\n"
                              "First Leg:\n  High No: %d\n  From: %s\n  To: %s\n  Tickets: %d\n"
@@ -415,7 +427,7 @@ void* handle_client(void* client_data_ptr) {
         }
 
         printf("client book request : %s\n", buffer);
-        fflush(stdout);
+        //fflush(stdout);
 
         if (sscanf(buffer, "%d %d %s %d %s", &start_idx, &dest_idx, time, &amount, ID) == 5) {
             check_and_book(ht_sock, tr_sock, client_sock, start_idx, dest_idx, time, amount, ID);
@@ -425,7 +437,7 @@ void* handle_client(void* client_data_ptr) {
         }
 
         printf("================================\n");
-        fflush(stdout);
+        //fflush(stdout);
     }
 
     // 清理資源
@@ -450,7 +462,10 @@ int main() {
 
     server.sin_family = AF_INET;
     server.sin_port = htons(7777);  // HOST 的監聽埠
-    server.sin_addr.s_addr = inet_addr("127.0.0.1");
+    server.sin_addr.s_addr = INADDR_ANY;;
+    
+    int opt = 1;
+    setsockopt(server_sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
     // 綁定 socket
     if (bind(server_sock, (struct sockaddr*)&server, sizeof(server)) < 0) {
@@ -461,7 +476,6 @@ int main() {
     // 開始監聽
     listen(server_sock, MAX_CLIENTS);
     printf("Server listening on port 7777...\n");
-    fflush(stdout);
 
     while (1) {
         socklen_t client_size = sizeof(client);
@@ -472,7 +486,6 @@ int main() {
         }
 
         printf("Client connected\n");
-        fflush(stdout);
 
         // 動態分配 client_data
         client_data_t* client_data = malloc(sizeof(client_data_t));
@@ -483,8 +496,8 @@ int main() {
         }
 
         // 建立高鐵和台鐵的連接
-        client_data->ht_sock = connect_to_server(HIGH_SPEED_IP, HIGH_SPEED_PORT);
-        client_data->tr_sock = connect_to_server(TRAIN_IP, TRAIN_PORT);
+        client_data->ht_sock = connect_to_server(HIGH_SPEED_PORT);
+        client_data->tr_sock = connect_to_server(TRAIN_PORT);
         if (client_data->ht_sock < 0 || client_data->tr_sock < 0) {
             perror("Failed to connect to train services");
             free(client_data);
