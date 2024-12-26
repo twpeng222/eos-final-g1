@@ -485,10 +485,10 @@ int main() {
         pthread_t tid;
         if (pthread_create(&tid, NULL, handle_client, (void*)client_data) != 0) {
             perror("Failed to create thread");
-            free(client_data);
-            close(client_sock);
             close(client_data->ht_sock);
             close(client_data->tr_sock);
+            free(client_data);
+            close(client_sock);
             continue;
         }
         pthread_detach(tid); // 分離執行緒，讓其自行管理生命週期
