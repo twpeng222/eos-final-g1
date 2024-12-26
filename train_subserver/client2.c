@@ -4,11 +4,24 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <ncurses.h>
+#include <signal.h>
 
 #define BUFFER_SIZE 512
+#define TIMER 10
 
-const char *stations[] = {"Taitung", "Hualien", "Yilan", "Taipei", "Taoyuan"};
+const char *stations[] = {"Taitung", "Hualien", "Yilan", "Taipei", "Taoyuan", "Taichung", "Tainan", "Kaohsiung"};
 #define NUM_STATIONS (sizeof(stations) / sizeof(stations[0]))
+
+int sock;
+
+void handle_alarm(int sig) {
+    if (sig == SIGALRM) {
+        endwin();
+        close(sock);
+        printf("No input for %d seconds. Connection terminated.\n",TIMER);
+        exit(EXIT_FAILURE);
+    }
+}
 
 void draw_menu(WINDOW *menu_win, int highlight, const char **choices, int n_choices) {
     box(menu_win, 0, 0);
@@ -32,6 +45,7 @@ int select_option(const char *prompt, const char **choices, int n_choices) {
         refresh();
         draw_menu(menu_win, highlight, choices, n_choices);
 
+        alarm(20); // Reset the alarm
         choice = wgetch(menu_win);
         switch (choice) {
             case KEY_UP:
@@ -42,6 +56,7 @@ int select_option(const char *prompt, const char **choices, int n_choices) {
                 break;
             case 10: // Enter key
                 delwin(menu_win);
+                alarm(0); // Cancel the alarm
                 return highlight;
         }
     }
@@ -52,7 +67,9 @@ void get_input(const char *prompt, char *input, int max_length) {
     mvprintw(LINES - 3, 0, "%s", prompt);
     clrtoeol();
     refresh();
+    alarm(20); // Reset the alarm
     mvgetnstr(LINES - 3, strlen(prompt), input, max_length);
+    alarm(0); // Cancel the alarm
     noecho();
     mvprintw(LINES - 3, 0, "Press ENTER to continue...");
     refresh();
@@ -119,7 +136,8 @@ int main(int argc, char *argv[]) {
 
     const char *server_ip = argv[1];
     int port = atoi(argv[2]);
-    int sock;
+
+    signal(SIGALRM, handle_alarm); // Set up the signal handler
 
     connect_to_server(server_ip, port, &sock);
 
@@ -128,7 +146,7 @@ int main(int argc, char *argv[]) {
     noecho();
     keypad(stdscr, TRUE);
 
-    char *choices[] = {
+    const char *choices[] = {
         "Check Train Schedule",
         "Book Tickets",
         "Check Orders",
@@ -145,6 +163,7 @@ int main(int argc, char *argv[]) {
     while (1) {
         draw_menu(menu_win, highlight, choices, n_choices);
 
+        alarm(TIMER); // Reset the alarm
         choice = wgetch(menu_win);
         switch (choice) {
             case KEY_UP:
@@ -154,6 +173,7 @@ int main(int argc, char *argv[]) {
                 highlight = (highlight + 1) % n_choices;
                 break;
             case 10: // Enter key
+                alarm(0); // Cancel the alarm
                 if (strcmp(choices[highlight], "Exit") == 0) {
                     endwin();
                     close(sock);
