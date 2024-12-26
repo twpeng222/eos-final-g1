@@ -7,7 +7,8 @@
 #include <signal.h>
 
 #define BUFFER_SIZE 512
-#define TIMER 10
+#define TIMER 100
+#define SEAT_AMOUNT 10
 
 const char *stations[] = {"Taitung", "Hualien", "Yilan", "Taipei", "Taoyuan", "Taichung", "Tainan", "Kaohsiung"};
 #define NUM_STATIONS (sizeof(stations) / sizeof(stations[0]))
@@ -149,9 +150,11 @@ int main(int argc, char *argv[]) {
     const char *choices[] = {
         "Check Train Schedule",
         "Book Tickets",
+        "Manual Book Tickets",
         "Check Orders",
         "Cancel Order",
         "Exit"
+        
     };
     int n_choices = sizeof(choices) / sizeof(char *);
     int highlight = 0;
@@ -239,7 +242,135 @@ int main(int argc, char *argv[]) {
                     snprintf(request, BUFFER_SIZE, "cancel_order %s %d %s %s %d", id, train_index, stations[start_index], stations[dest_index], tickets);
                     send(sock, request, strlen(request), 0);
                     handle_response(sock);
+                } else if (strcmp(choices[highlight], "Manual Book Tickets") == 0) {
+                    int start_index = select_option("Select start station:", stations, NUM_STATIONS);
+                    int dest_index = select_option("Select destination station:", stations, NUM_STATIONS);
+                    char id[20], train_index_str[4], tickets_str[4];
+                    int train_index, tickets;
+
+                    get_input("Enter train index: ", train_index_str, 4);
+                    train_index = atoi(train_index_str);
+                    get_input("Enter number of tickets: ", tickets_str, 4);
+                    tickets = atoi(tickets_str);
+                    get_input("Enter your ID: ", id, 20);
+
+                    char request[BUFFER_SIZE];
+                    snprintf(request, BUFFER_SIZE, "manual_book_ticket %d %s %s %d %s", train_index, stations[start_index], stations[dest_index], tickets, id);
+                    send(sock, request, strlen(request), 0);
+
+                    // 接收座位狀態
+                    char seat_status[BUFFER_SIZE];
+                    int bytes_read = recv(sock, seat_status, BUFFER_SIZE - 1, 0);
+
+                    if (bytes_read > 0) {
+                        seat_status[bytes_read] = '\0';
+
+                        int seat_allocation[SEAT_AMOUNT / 2][2] = {0}; // 每行兩列
+                        char *line_ptr = strtok(seat_status, "\n");
+                        //int current_seat = 0;
+
+                        while (line_ptr != NULL) {
+                            // 每行可能包含多個 Seat N: M
+                            if (strstr(line_ptr, "Seat") != NULL) {
+                                // 用 while + strstr + sscanf 一次解析多個座位
+                                char *p = line_ptr;
+                                while ((p = strstr(p, "Seat ")) != NULL) {
+                                    int seat_idx, seat_val;
+                                    // 格式例如 "Seat 0: 1"
+                                    if (sscanf(p, "Seat %d: %d", &seat_idx, &seat_val) == 2) {
+                                        if (seat_idx >= 0 && seat_idx < SEAT_AMOUNT) {
+                                            int row = seat_idx / 2;
+                                            int col = seat_idx % 2;
+                                            seat_allocation[row][col] = seat_val;
+                                        }
+                                    }
+                                    // 往後移動指標，繼續找下一個 "Seat "
+                                    p += 5; 
+                                }
+                            }
+
+                            line_ptr = strtok(NULL, "\n");
+                        }
+
+                        // 顯示並選擇座位
+                        int selected_seats[tickets];
+                        int selected_count = 0;
+                        int cursor_x = 0, cursor_y = 0;
+
+                        while (1) {
+                            clear();
+
+                            mvprintw(1, 0, "Seat Status for Train %d from %s to %s:", train_index, stations[start_index], stations[dest_index]);
+                            mvprintw(3, 0, "Use arrow keys to move, SPACE to select, ENTER to confirm.");
+
+                            // 顯示座位表
+                            for (int j = 0; j < 2; j++) {
+                                for (int i = 0; i < SEAT_AMOUNT / 2; i++) {
+                                    if (seat_allocation[i][j] == 1) {
+                                        mvprintw(5 + i, 5 + j * 4, "[X]"); // 已佔用
+                                    } else if (seat_allocation[i][j] == 2) {
+                                        mvprintw(5 + i, 5 + j * 4, "[O]"); // 已選
+                                    } else {
+                                        mvprintw(5 + i, 5 + j * 4, "[ ]"); // 可選
+                                    }
+                                }
+                            }
+
+                            // 光標顯示
+                            move(5 + cursor_x, 5 + cursor_y * 4);
+                            refresh();
+
+                            int ch = getch();
+                            switch (ch) {
+                                case KEY_UP:
+                                    cursor_x = (cursor_x - 1 + SEAT_AMOUNT / 2) % (SEAT_AMOUNT / 2);
+                                    break;
+                                case KEY_DOWN:
+                                    cursor_x = (cursor_x + 1) % (SEAT_AMOUNT / 2);
+                                    break;
+                                case KEY_LEFT:
+                                    cursor_y = (cursor_y - 1 + 2) % 2;
+                                    break;
+                                case KEY_RIGHT:
+                                    cursor_y = (cursor_y + 1) % 2;
+                                    break;
+                                case ' ': // 選擇座位
+                                    if (seat_allocation[cursor_x][cursor_y] == 0 && selected_count < tickets) {
+                                        seat_allocation[cursor_x][cursor_y] = 2; // 標記為已選
+                                        selected_seats[selected_count++] = cursor_x * 2 + cursor_y; // 保存座位號
+                                    } else if (seat_allocation[cursor_x][cursor_y] == 2) {
+                                        seat_allocation[cursor_x][cursor_y] = 0; // 取消選擇
+                                        selected_count--; // 減少選擇數量
+                                    }
+                                    break;
+                                case '\n': // 確認選擇
+                                    if (selected_count == tickets) {
+                                        goto finalize_selection;
+                                    }
+                                    break;
+                            }
+                        }
+
+                    finalize_selection:
+                        // 傳送已選座位
+                        char selected_seats_str[BUFFER_SIZE] = "";
+                        for (int i = 0; i < selected_count; i++) {
+                            char temp[20];
+                            sprintf(temp, "%d ", selected_seats[i]);
+                            strcat(selected_seats_str, temp);
+                        }
+                        send(sock, selected_seats_str, strlen(selected_seats_str), 0);
+
+                        // 接收確認消息
+                        handle_response(sock);
+                    }
+
+
                 }
+
+
+
+
                 break;
         }
     }
