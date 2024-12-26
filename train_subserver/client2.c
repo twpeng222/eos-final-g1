@@ -7,7 +7,7 @@
 #include <signal.h>
 
 #define BUFFER_SIZE 512
-#define TIMER 100
+#define TIMER 10
 #define SEAT_AMOUNT 10
 
 const char *stations[] = {"Taitung", "Hualien", "Yilan", "Taipei", "Taoyuan", "Taichung", "Tainan", "Kaohsiung"};
