@@ -423,6 +423,9 @@ void* handle_client(void* client_data_ptr) {
             sprintf(response, "Invalid command format. Please enter your book request again:\n");
             write(client_sock, response, BUFFER_SIZE);
         }
+
+        printf("================================\n");
+        fflush(stdout);
     }
 
     // 清理資源
