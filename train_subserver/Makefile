@@ -2,8 +2,8 @@ CC = gcc
 CFLAGS = -Wall -Wextra -g
 TARGET = server 
 
-all: $(TARGET) CLIENT TRAIN HOST HSR CLIENT2
-
+all: $(TARGET) CLIENT TRAIN HOST HSR CLIENT2 HOST_NEW HOST_NEW_CLIENT
+ 
 $(TARGET): server.c 
 	$(CC) $(CFLAGS) -o $(TARGET) server.c 
 TRAIN: train_subserver.c
