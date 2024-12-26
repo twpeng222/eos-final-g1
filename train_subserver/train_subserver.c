@@ -97,25 +97,55 @@ int isEarlier(TrainTime *t1, TrainTime *t2) {
 
 
 void initialize_train_data() {
-    for (int i = 0; i < TRAIN_AMOUNT; i++) {
+    for (int i = 0; i < TRAIN_AMOUNT/2; i++) {
         int direction = (i < TRAIN_AMOUNT / 2) ? 1 : -1;
         shared_data->direction[i] = direction;
 
-        int start_hour = (i % (TRAIN_AMOUNT / 2)) + 6; 
+        int start_hour = ((i % (TRAIN_AMOUNT / 2)) + 21)%24; 
 
         for (int j = 0; j < POINT_AMOUNT; j++) {
             int point = (direction == 1) ? j : POINT_AMOUNT - j - 1;
 
             shared_data->schedule[i][point].year = 2024;
             shared_data->schedule[i][point].month = 12;
-            shared_data->schedule[i][point].day = 21;
-            shared_data->schedule[i][point].hour = start_hour + j*3;
+            if (start_hour + j*3 > 23){
+                shared_data->schedule[i][point].day = 21;
+                shared_data->schedule[i][point].hour = (start_hour + j*3)%24;
+            } else{
+                shared_data->schedule[i][point].day = 20;
+                shared_data->schedule[i][point].hour = (start_hour + j*3)%24;
+            }
             shared_data->schedule[i][point].minute = 0;
 
             shared_data->seats[i][j] = SEAT_AMOUNT; 
             // printf("Train%d %s %d\n", i, line[point], shared_data->schedule[i][point].hour);
         }
     }
+    for (int i = TRAIN_AMOUNT/2; i < TRAIN_AMOUNT; i++) {
+        int direction = (i < TRAIN_AMOUNT / 2) ? 1 : -1;
+        shared_data->direction[i] = direction;
+
+        int start_hour = ((i % (TRAIN_AMOUNT / 2)) + 15)%24; 
+
+        for (int j = 0; j < POINT_AMOUNT; j++) {
+            int point = (direction == 1) ? j : POINT_AMOUNT - j - 1;
+
+            shared_data->schedule[i][point].year = 2024;
+            shared_data->schedule[i][point].month = 12;
+            if (start_hour + j*3 > 23){
+                shared_data->schedule[i][point].day = 22;
+                shared_data->schedule[i][point].hour = (start_hour + j*3)%24;
+            } else{
+                shared_data->schedule[i][point].day = 21;
+                shared_data->schedule[i][point].hour = (start_hour + j*3)%24;
+            }
+            shared_data->schedule[i][point].minute = 0;
+
+            shared_data->seats[i][j] = SEAT_AMOUNT; 
+            // printf("Train%d %s %d\n", i, line[point], shared_data->schedule[i][point].hour);
+        }
+    }
+
     for (int i = 0; i < TRAIN_AMOUNT; i++) {
         shared_data->total_seats[i] = SEAT_AMOUNT; // 初始化每列火車的總座位數
     }
@@ -584,13 +614,29 @@ void handle_client(int client_sock) {
                 for (int i = 0; i < TRAIN_AMOUNT; i++) {
                     if (train_list[i]) {
                         int farest_index = calculate_farest_dest(i, start_index, dest_index, amount);
-                        int remaining_seats = calculate_remaining_seats(i, start_index, farest_index);
-                        char temp[512], time[20];
-                        encode_time(shared_data->schedule[i], time);
-                        sprintf(temp, "Farest Train %d from %s to %s (Seats: %d) at %s\n",
-                                i, line[start_index], line[farest_index], remaining_seats, time);
-                        strcat(response, temp);
-                        break;
+                        // int remaining_seats = calculate_remaining_seats(i, start_index, farest_index);
+                        // char temp[512], time[20], time2[20];
+                        // encode_time(&shared_data->schedule[i][farest_index], time);
+                        // encode_time(&shared_data->schedule[i][start_index], time2);
+                        // sprintf(temp, "Farest Train %d from %s to %s (Seats: %d) at %s to %s\n",
+                        //         i, line[start_index], line[farest_index], remaining_seats, time2,time);
+                        // strcat(response, temp);
+                        // break;
+                        if (farest_index == start_index) {
+                            char temp[512];
+                            sprintf(temp, "No train available!");
+                            strcat(response, temp);
+                            break;
+                        } else{
+                            int remaining_seats = calculate_remaining_seats(i, start_index, farest_index);
+                            char temp[512], time[20], time2[20];
+                            encode_time(&shared_data->schedule[i][farest_index], time);
+                            encode_time(&shared_data->schedule[i][start_index], time2);
+                            sprintf(temp, "Farest Train %d from %s to %s (Seats: %d) at %s to %s\n",
+                                    i, line[start_index], line[farest_index], remaining_seats, time2,time);
+                            strcat(response, temp);
+                            break;
+                        }
                     }
                 }
                 send(client_sock, response, strlen(response), 0);
@@ -796,7 +842,7 @@ int main(int argc, char *argv[]) {
     int port = atoi(argv[1]);
 
     key_t key = ftok("train_subserver.c", 1);
-    key_t sem_key = ftok("server.c", 2);
+    key_t sem_key = ftok("train_subserver.c", 2);
     shm_id = shmget(key, sizeof(TrainServer), IPC_CREAT | 0666);
     if (shm_id == -1) {
         perror("shmget failed");
