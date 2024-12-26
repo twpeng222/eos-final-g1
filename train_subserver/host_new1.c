@@ -91,7 +91,7 @@ void check(check_data_t* check_data, int sock, int start_idx, int dest_idx, cons
     fflush(stdout);
     if(strncmp(buffer, "Farest", 6) == 0) {
         sscanf(buffer, "Farest Train %d from %s to %s (Seats: %d) at %s to %s\n",
-           &check_data->train_no, check_data->start, check_data->farest_dest, &check_data->remaining_seats, check_data->arrive_time, check_data->depart_time);
+           &check_data->train_no, check_data->start, check_data->farest_dest, &check_data->remaining_seats, check_data->depart_time, check_data->arrive_time);
         if (strcmp(check_data->farest_dest, Points[dest_idx]) == 0) {
             check_data->check_state = 1;
         } else {
@@ -202,7 +202,7 @@ void check_and_book(int ht_sock, int tr_sock, int client_sock, int start_idx, in
                 write(client_sock, response, BUFFER_SIZE);
             } else {
                 // 處理 (0-2) ~ (5~7)
-                check(high_check_data, ht_sock, train_destination, dest_idx, train_check_data->depart_time, amount);
+                check(high_check_data, ht_sock, train_destination, dest_idx, train_check_data->arrive_time, amount);
                 if (high_check_data->check_state == 0) {
                     snprintf(response, BUFFER_SIZE, "No HSR available from %s to %s.\n", Points[start_idx], Points[dest_idx]);
                     write(client_sock, response, BUFFER_SIZE);
@@ -250,7 +250,7 @@ void check_and_book(int ht_sock, int tr_sock, int client_sock, int start_idx, in
                          train_book_data->train_no, Points[start_idx], Points[dest_idx], amount);
                     write(client_sock, response, BUFFER_SIZE);
                 } else {
-                    check(high_check_data, ht_sock, 4, dest_idx, train_check_data->depart_time, amount);
+                    check(high_check_data, ht_sock, 4, dest_idx, train_check_data->arrive_time, amount);
                     if (high_check_data->check_state == 1) {
                         book(train_book_data, tr_sock, train_check_data->train_no, start_idx, 4, amount, ID);
                         book(high_book_data, ht_sock, high_check_data->train_no, 4, dest_idx, amount, ID);
@@ -308,7 +308,7 @@ void check_and_book(int ht_sock, int tr_sock, int client_sock, int start_idx, in
                 write(client_sock, response, BUFFER_SIZE);
             } else {
                 // 處理 (5~7) ~ (0-2)
-                check(train_check_data, tr_sock, high_destination, dest_idx, high_check_data->depart_time, amount);
+                check(train_check_data, tr_sock, high_destination, dest_idx, high_check_data->arrive_time, amount);
                 if (train_check_data->check_state == 0) {
                     snprintf(response, BUFFER_SIZE, "No train available from %s to %s.\n", Points[start_idx], Points[dest_idx]);
                     write(client_sock, response, BUFFER_SIZE);
@@ -356,7 +356,7 @@ void check_and_book(int ht_sock, int tr_sock, int client_sock, int start_idx, in
                      high_book_data->train_no, Points[start_idx], Points[dest_idx], amount);
                     write(client_sock, response, BUFFER_SIZE);
                 } else {
-                    check(train_check_data, tr_sock, 3, dest_idx, high_check_data->depart_time, amount);
+                    check(train_check_data, tr_sock, 3, dest_idx, high_check_data->arrive_time, amount);
                     if (train_check_data->check_state == 1) {
                         book(high_book_data, ht_sock, high_check_data->train_no, 3, 4, amount, ID);
                         book(train_book_data, tr_sock, train_check_data->train_no, 4, dest_idx, amount, ID);
