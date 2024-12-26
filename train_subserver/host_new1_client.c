@@ -64,7 +64,7 @@ int main() {
 
     // 設定伺服器地址
     server.sin_family = AF_INET;
-    server.sin_port = htons(12345); // 與伺服器設定相同的埠號
+    server.sin_port = htons(7777); // 與伺服器設定相同的埠號
     server.sin_addr.s_addr = inet_addr("127.0.0.1"); // 本地回環地址
 
     // 連接伺服器

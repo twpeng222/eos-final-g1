@@ -115,12 +115,8 @@ void book(book_data_t* book_data, int sock, int train_no, int start_idx, int des
 }
 
 void check_and_book(int ht_sock, int tr_sock, int client_sock, int start_idx, int dest_idx, const char* time, int amount, const char* ID) {
-    char buffer[BUFFER_SIZE];
     char response[BUFFER_SIZE];
 
-    int direction = (start_idx < dest_idx);
-    int not_cross = (start_idx<3 && dest_idx<3) || (start_idx>4 && dest_idx>4);
-    
     check_data_t* train_check_data = malloc(sizeof(check_data_t));
     book_data_t* train_book_data = malloc(sizeof(book_data_t));
     check_data_t* high_check_data = malloc(sizeof(check_data_t));
@@ -413,7 +409,7 @@ void* handle_client(void* client_data_ptr) {
         printf("client request : %s", buffer);
 
         if (sscanf(buffer, "%d %d %s %d %s", &start_idx, &dest_idx, time, &amount, ID) == 5) {
-            check_and_book(ht_sock, tr_sock, client_sock, start_idx, dest_idx, time, amount);
+            check_and_book(ht_sock, tr_sock, client_sock, start_idx, dest_idx, time, amount, ID);
         } else {
             sprintf(response, "Invalid command format. Please enter your book request again:\n");
             write(client_sock, response, BUFFER_SIZE);
