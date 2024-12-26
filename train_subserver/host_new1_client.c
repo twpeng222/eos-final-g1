@@ -46,6 +46,7 @@ void interact_with_server(int sock) {
 
         response[read_size] = '\0'; // 確保字串結尾
         printf("Server response:\n%s\n", response);
+        fflush(stdout);
     }
 }
 

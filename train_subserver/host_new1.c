@@ -83,8 +83,12 @@ void check(check_data_t* check_data, int sock, int start_idx, int dest_idx, cons
     char buffer[BUFFER_SIZE];
     char response[BUFFER_SIZE];
     sprintf(response, "check_schedule %s %s %s %d", Points[start_idx], Points[dest_idx], time, amount);
+    printf("check request: %s\n", response);
+    fflush(stdout);
     write(sock, response, BUFFER_SIZE);
     read(sock, buffer, BUFFER_SIZE);
+    printf("check reply: %s\n", buffer);
+    fflush(stdout);
     if(strncmp(buffer, "Farest", 6) == 0) {
         sscanf(buffer, "Farest Train %d from %s to %s (Seats: %d) at %s to %s\n",
            &check_data->train_no, check_data->start, check_data->farest_dest, &check_data->remaining_seats, check_data->arrive_time, check_data->depart_time);
@@ -103,8 +107,12 @@ void book(book_data_t* book_data, int sock, int train_no, int start_idx, int des
     char buffer[BUFFER_SIZE];
     char response[BUFFER_SIZE];
     sprintf(response, "book_ticket %d %s %s %d %s %d", train_no, Points[start_idx], Points[dest_idx], amount, ID, 1);
+    printf("book request: %s\n", response);
+    fflush(stdout);
     write(sock, response, BUFFER_SIZE);
     read(sock, buffer, BUFFER_SIZE);
+    printf("book message: %s\n", buffer);
+    fflush(stdout);
     if (strncmp(buffer, "Booking confirmed", 17) == 0) {
         sscanf(buffer, "Booking confirmed for Train %d from %s to %s. Tickets: %d. ID: %s\n",
            &book_data->train_no, book_data->start, book_data->dest, &book_data->tickets, book_data->tickets_info);
@@ -407,6 +415,7 @@ void* handle_client(void* client_data_ptr) {
         }
 
         printf("client request : %s", buffer);
+        fflush(stdout);
 
         if (sscanf(buffer, "%d %d %s %d %s", &start_idx, &dest_idx, time, &amount, ID) == 5) {
             check_and_book(ht_sock, tr_sock, client_sock, start_idx, dest_idx, time, amount, ID);
@@ -449,6 +458,7 @@ int main() {
     // 開始監聽
     listen(server_sock, MAX_CLIENTS);
     printf("Server listening on port 7777...\n");
+    fflush(stdout);
 
     while (1) {
         socklen_t client_size = sizeof(client);
@@ -459,6 +469,7 @@ int main() {
         }
 
         printf("Client connected\n");
+        fflush(stdout);
 
         // 動態分配 client_data
         client_data_t* client_data = malloc(sizeof(client_data_t));
