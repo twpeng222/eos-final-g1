@@ -390,7 +390,7 @@ void* handle_client(void* client_data_ptr) {
 
     char buffer[BUFFER_SIZE];
     char response[BUFFER_SIZE];
-    char start[20], dest[20], time[20], ID[20];
+    char time[20], ID[20];
     int start_idx, dest_idx;
     int amount;
 
@@ -428,7 +428,6 @@ void* handle_client(void* client_data_ptr) {
 int main() {
     int server_sock, client_sock;
     struct sockaddr_in server, client;
-    int client_count = 0;
 
     // 創建主伺服器 socket
     server_sock = socket(AF_INET, SOCK_STREAM, 0);
@@ -449,7 +448,7 @@ int main() {
 
     // 開始監聽
     listen(server_sock, MAX_CLIENTS);
-    printf("Server listening on port 12345...\n");
+    printf("Server listening on port 7777...\n");
 
     while (1) {
         socklen_t client_size = sizeof(client);
