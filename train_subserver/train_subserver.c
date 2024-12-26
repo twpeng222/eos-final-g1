@@ -39,17 +39,17 @@ typedef struct {
 } TrainTime;
 
 typedef struct {
-    char id[20];         // 訂票人的 ID
-    int train_index;     // 火車編號
-    int start_index;     // 起點站索引
-    int dest_index;      // 終點站索引
-    int tickets;         // 訂票數量
-    int seat_numbers[10]; // 座位號 (假設最多一次訂10張票)
+    char id[20];         
+    int train_index;    
+    int start_index;     
+    int dest_index;     
+    int tickets;         
+    int seat_numbers[10]; 
 } BookingRecord;
 
 typedef struct {
-    int seats[TRAIN_AMOUNT][POINT_AMOUNT - 1]; // 區間座位數
-    int total_seats[TRAIN_AMOUNT];            // 每列火車的總可用座位數
+    int seats[TRAIN_AMOUNT][POINT_AMOUNT - 1]; 
+    int total_seats[TRAIN_AMOUNT];            
     int seat_allocation[TRAIN_AMOUNT][SEAT_AMOUNT][POINT_AMOUNT - 1]; 
     TrainTime schedule[TRAIN_AMOUNT][POINT_AMOUNT];
     int direction[TRAIN_AMOUNT];
@@ -270,12 +270,10 @@ void query_bookings_by_id(const char *id) {
 }
 
 int update_seats(int train_index, int start, int dest, int tickets, const char *id, int contiguous) {
-    semop(sem_id, &p_op, 1); // 取得鎖
+    semop(sem_id, &p_op, 1);
 
     int seat_numbers[10];
     int seat_count = 0;
-
-    // 0) 如果起終點相同 => 直接失敗
     if (start == dest) {
         semop(sem_id, &v_op, 1);
         return -1;
@@ -284,11 +282,7 @@ int update_seats(int train_index, int start, int dest, int tickets, const char *
     printf("[DEBUG] update_seats: train=%d, start=%d, dest=%d, tickets=%d, id=%s\n",
            train_index, start, dest, tickets, id);
 
-    // ----------------------------- 
-    // (A) 分兩段: 順向 or 逆向
-    // -----------------------------
     if (start < dest) {
-        // 先檢查每段 seats[i] 是否 >= tickets
         for (int i = start; i < dest; i++) {
             if (shared_data->seats[train_index][i] < tickets) {
                 printf("[DEBUG] seats[%d][%d] not enough => fail\n", train_index, i);
@@ -296,10 +290,7 @@ int update_seats(int train_index, int start, int dest, int tickets, const char *
                 return -1;
             }
         }
-
-        // 開始分配座位 (contiguous / non-contiguous)
         if (contiguous) {
-            // 找連續座位 seat=0..(SEAT_AMOUNT-tickets)
             for (int seat = 0; seat <= SEAT_AMOUNT - tickets; seat++) {
                 int available = 1;
                 // 檢查在 i=[start..dest-1]，seat..seat+(tickets-1) 是否都為0
@@ -329,7 +320,6 @@ int update_seats(int train_index, int start, int dest, int tickets, const char *
             // non-contiguous
             for (int seat = 0; seat < SEAT_AMOUNT && seat_count < tickets; seat++) {
                 int available = 1;
-                // 檢查 i=[start..dest-1]
                 for (int i = start; i < dest; i++) {
                     if (shared_data->seat_allocation[train_index][seat][i] != 0) {
                         available = 0;
@@ -337,7 +327,6 @@ int update_seats(int train_index, int start, int dest, int tickets, const char *
                     }
                 }
                 if (available) {
-                    // 分配
                     for (int i = start; i < dest; i++) {
                         shared_data->seat_allocation[train_index][seat][i] = 1;
                     }
@@ -348,8 +337,6 @@ int update_seats(int train_index, int start, int dest, int tickets, const char *
         }
     } 
     else {
-        // 逆向: start>dest
-        // 檢查 seats[i = start-1..dest] 是否足夠 (站 4->3->2->1->0)
         for (int i = start - 1; i >= dest; i--) {
             if (shared_data->seats[train_index][i] < tickets) {
                 printf("[DEBUG] seats[%d][%d] not enough => fail\n", train_index, i);
@@ -459,13 +446,11 @@ void free_seats_for_record(BookingRecord *record) {
         int seat_id = record->seat_numbers[s];
 
         if (start_seg < dest_seg) {
-            // 順向
             for (int seg = start_seg; seg < dest_seg; seg++) {
                 shared_data->seat_allocation[train_idx][seat_id][seg] = 0;
                 shared_data->seats[train_idx][seg] += 1;
             }
         } else {
-            // 逆向
             for (int seg = start_seg - 1; seg >= dest_seg; seg--) {
                 shared_data->seat_allocation[train_idx][seat_id][seg] = 0;
                 shared_data->seats[train_idx][seg] += 1;
@@ -578,7 +563,7 @@ int cancel_order(const char *id,
 
 
 
-// 處理客戶端請求
+
 void handle_client(int client_sock) {
     char buffer[BUFFER_SIZE];
     int bytes_read;
@@ -586,11 +571,7 @@ void handle_client(int client_sock) {
     if (pid > 0) {
         while ((bytes_read = recv(client_sock, buffer, BUFFER_SIZE, 0)) > 0) {
             buffer[bytes_read] = '\0';
-            printf("check_schedule");
-            fflush(stdout);
-
             if (strncmp(buffer, "check_schedule", 14) == 0) {
-                // 處理 check_schedule 指令的邏輯
                 char start[20], dest[20], time_str[20];
                 TrainTime start_time;
                 int start_index, dest_index, amount;
@@ -793,6 +774,94 @@ void handle_client(int client_sock) {
                             id, train_index, start, dest, cancel_num);
                     send(client_sock, msg, strlen(msg), 0);
                 }
+            } else if (strncmp(buffer, "manual_book_ticket", 18) == 0) {
+                int train_index, start_index, dest_index, tickets;
+                char id[20];
+                char start[20], dest[20];
+                
+                // 解析客戶端傳入的指令
+                sscanf(buffer + 19, "%d %s %s %d %s", &train_index, start, dest, &tickets, id);
+                printf("\nreceive %d %s %s %d %s\n", train_index, start, dest, tickets, id);
+                fflush(stdout);
+
+                start_index = handle_point(start);
+                dest_index = handle_point(dest);
+
+                if (start_index == -1 || dest_index == -1) {
+                    const char *error_msg = "Invalid station name.\n";
+                    send(client_sock, error_msg, strlen(error_msg), 0);
+                    continue;
+                }
+
+                char seat_status[BUFFER_SIZE] = "";
+                
+                // 傳回區段與座位狀態
+                if (start_index < dest_index) {
+                    for (int i = start_index; i < dest_index; i++) {
+                        char segment_status[100] = "";
+                        sprintf(segment_status, "Segment %s to %s:\n", line[i], line[i + 1]);
+                        strcat(seat_status, segment_status);
+                        for (int j = 0; j < SEAT_AMOUNT; j++) {
+                            char seat_info[20];
+                            sprintf(seat_info, "Seat %d: %d  ", j, shared_data->seat_allocation[train_index][j][i]);
+                            strcat(seat_status, seat_info);
+                            if ((j + 1) % 5 == 0) strcat(seat_status, "\n");
+                        }
+                        strcat(seat_status, "\n");
+                    }
+                } else {
+                    for (int i = start_index-1; i >= dest_index; i--) {
+                        char segment_status[100] = "";
+                        sprintf(segment_status, "Segment %s to %s:\n", line[i], line[i - 1]);
+                        strcat(seat_status, segment_status);
+                        for (int j = 0; j < SEAT_AMOUNT; j++) {
+                            char seat_info[20];
+                            sprintf(seat_info, "Seat %d: %d  ", j, shared_data->seat_allocation[train_index][j][i]);
+                            strcat(seat_status, seat_info);
+                            if ((j + 1) % 5 == 0) strcat(seat_status, "\n");
+                        }
+                        strcat(seat_status, "\n");
+                    }
+                }
+                printf("%s\n", seat_status);
+                fflush(stdout);
+                // 傳送座位狀態到客戶端
+                send(client_sock, seat_status, strlen(seat_status), 0);
+
+                // 接收客戶端回傳的座位選擇
+                char selected_seats[BUFFER_SIZE];
+                recv(client_sock, selected_seats, BUFFER_SIZE - 1, 0);
+                printf("%s\n", selected_seats);
+                fflush(stdout);
+                // 更新共享記憶體中的座位狀態
+                int seat_number, counter;
+                counter = 0;
+                char *token = strtok(selected_seats, " ");
+                while (token != NULL && counter < tickets) {
+                    seat_number = atoi(token);
+                    if (start_index < dest_index){
+                        for (int i = start_index; i < dest_index; i++) {
+                            shared_data->seat_allocation[train_index][seat_number][i] = 1;
+                            shared_data->seats[train_index][i]--;
+                        }
+                    } 
+                    else {
+                        for (int i = start_index - 1; i >= dest_index; i--) {
+                            shared_data->seat_allocation[train_index][seat_number][i] = 1;
+                            shared_data->seats[train_index][i]--;
+                        }                        
+                    }
+                    token = strtok(NULL, " ");
+                    counter++;
+                }
+
+                // 傳回訂票確認
+                char confirmation[BUFFER_SIZE];
+                sprintf(confirmation, "Manual booking confirmed for Train %d from %s to %s. ID: %s\n",
+                        train_index, line[start_index], line[dest_index], id);
+                printf("send back");
+                fflush(stdout);
+                send(client_sock, confirmation, strlen(confirmation), 0);
             }
 
         }
