@@ -126,6 +126,7 @@ void book(book_data_t* book_data, int sock, int train_no, int start_idx, int des
     }
 }
 
+// 透過 check 和 book 的交互，完成顧客的請求
 void check_and_book(int ht_sock, int tr_sock, int client_sock, int start_idx, int dest_idx, const char* time, int amount, const char* ID) {
     char response[BUFFER_SIZE];
     memset(response, 0, BUFFER_SIZE);
