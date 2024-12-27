@@ -26,6 +26,14 @@ tmux select-pane -t 0
 tmux split-window -v -t 1
 tmux send-keys -t $SESSION "./host_new_client" C-m
 
+# 分裂窗口並執行第五個 ./host_new_client
+tmux split-window -h -t 1
+tmux send-keys -t $SESSION "./host_new_client" C-m
+
+# 分裂窗口並執行第六個 ./client2 192.168.222.100 8881
+tmux split-window -v -t 0
+tmux send-keys -t $SESSION "./client2 192.168.222.100 8881" C-m
+
 # 調整畫面佈局，讓分裂更加清晰
 tmux select-layout tiled
 
