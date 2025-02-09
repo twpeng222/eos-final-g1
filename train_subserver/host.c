@@ -122,24 +122,16 @@ void connect_to_server(const char *server_ip, int server_port, int pipefd_read, 
 
     printf("Child process connected to server %s:%d\n", server_ip, server_port);
 
-    // 註冊信號處理函數
     signal((pipefd_read == pipefd1[0]) ? SIGUSR1 : SIGUSR2, handle_signal);
 
     while (1) {
-        // 等待信號喚醒
         pause();
 
-        // 從管道讀取父進程傳遞的資料
-        
-        // read(pipefd_read, buffer, BUFFER_SIZE);
-        // printf("%s\n", buffer);
-        // 傳送資料到伺服器
         if (send(sockfd, buffer, strlen(buffer), 0) < 0) {
             perror("Send failed");
             break;
         }
 
-        // 接收伺服器回應
         memset(buffer, 0, BUFFER_SIZE);
         int bytes_received = recv(sockfd, buffer, BUFFER_SIZE - 1, 0);
         if (bytes_received > 0) {
