@@ -568,7 +568,7 @@ void handle_client(int client_sock) {
     char buffer[BUFFER_SIZE];
     int bytes_read;
     pid_t pid = fork();
-    if (pid > 0) {
+    if (pid == 0) {
         while ((bytes_read = recv(client_sock, buffer, BUFFER_SIZE, 0)) > 0) {
             buffer[bytes_read] = '\0';
             if (strncmp(buffer, "check_schedule", 14) == 0) {
